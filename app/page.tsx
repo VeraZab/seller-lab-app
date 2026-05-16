@@ -6,7 +6,7 @@ export default function Home() {
       <footer>
         <p>A product by ZabZabLab.</p>
         <p>
-          Contact: <a href="mailto:vera@atomic.supply">vera@atomic.supply</a>
+          Contact: <a href="mailto:zabzablab@gmail.com">zabzablab</a>
         </p>
       </footer>
     </main>
