@@ -629,8 +629,8 @@ Everything to have in place before (or during) Phase 1 development. Checkboxes t
 
 - [x] **Domain registered** — `sellerlab.app`
 - [x] **Supabase account**
-- [ ] **Supabase project created** (account ≠ project — see config steps below)
-- [ ] **Vercel account** + GitHub repo connected (needed by Build 2)
+- [x] **Supabase project created** (account ≠ project — see config steps below)
+- [x] **Vercel account** + GitHub repo connected (needed by Build 2)
 - [ ] **Stripe account** — test mode is enough until Build 5. Live-mode prerequisites: verified business info, EIN/SSN, bank account
 - [ ] **Anthropic API key** with billing + monthly spend limit set (~$50/mo during dev, ~$200/mo live)
 - [ ] **GitHub Actions enabled** on the repo (Build 21 — keep-alive cron)
