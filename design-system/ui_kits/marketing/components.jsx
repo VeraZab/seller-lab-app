@@ -305,7 +305,7 @@ function Footer() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <BrandLockup size={24} fontSize={16} />
           <div style={{ fontSize: 13, color: 'var(--ink-500)', maxWidth: 320, lineHeight: 1.55 }}>
-            A focused workshop tool for Spoonflower sellers, by an indie maker. Not affiliated with Spoonflower Inc.
+            A workflow tool for Spoonflower sellers, by zabzablab. Not affiliated with Spoonflower Inc.
           </div>
         </div>
         <div style={mktStyles.footerCols}>
