@@ -23,3 +23,45 @@ img,
 svg {
   display: block;
 }
+
+/* Logo meadow — blooming flowers animation behind the hero */
+@keyframes meadow-bloom {
+  0%, 100% {
+    opacity: 0;
+    transform: scale(0.12) rotate(var(--rot-start, -8deg));
+  }
+  15% {
+    opacity: var(--bloom-peak, 0.28);
+    transform: scale(1) rotate(var(--rot-mid, 0deg));
+  }
+  40% {
+    opacity: var(--bloom-peak, 0.28);
+    transform: scale(1.08) rotate(var(--rot-mid, 0deg));
+  }
+  60% {
+    opacity: var(--bloom-peak, 0.28);
+    transform: scale(1) rotate(var(--rot-mid, 0deg));
+  }
+  82% {
+    opacity: calc(var(--bloom-peak, 0.28) * 0.5);
+    transform: scale(0.82) rotate(var(--rot-end, 8deg));
+  }
+}
+
+.meadow-bloom {
+  display: block;
+  opacity: 0;
+  transform-origin: center;
+  will-change: transform, opacity;
+  animation-name: meadow-bloom;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meadow-bloom {
+    animation: none !important;
+    opacity: 0.15 !important;
+    transform: scale(1) !important;
+  }
+}

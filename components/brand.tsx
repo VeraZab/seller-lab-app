@@ -41,6 +41,7 @@ type BrandLockupProps = {
   size?: number;
   fontSize?: number;
   showPro?: boolean;
+  dark?: boolean;
 };
 
 export function BrandLockup({
@@ -48,7 +49,11 @@ export function BrandLockup({
   size = 28,
   fontSize = 18,
   showPro = true,
+  dark = false,
 }: BrandLockupProps) {
+  const wordmarkColor = dark ? "var(--parchment-100)" : "var(--ink-900)";
+  const proColor = dark ? "var(--saffron-300)" : "var(--saffron-700)";
+  const proBg = dark ? "rgba(224, 164, 88, 0.18)" : "var(--saffron-100)";
   return (
     <Link
       href={href}
@@ -66,7 +71,7 @@ export function BrandLockup({
           fontFamily: "var(--font-display)",
           fontWeight: 500,
           fontSize,
-          color: "var(--ink-900)",
+          color: wordmarkColor,
           letterSpacing: "-0.01em",
           lineHeight: 1,
           whiteSpace: "nowrap",
@@ -81,8 +86,8 @@ export function BrandLockup({
             fontWeight: 700,
             fontSize: 9.5,
             letterSpacing: "0.16em",
-            color: "var(--saffron-700)",
-            background: "var(--saffron-100)",
+            color: proColor,
+            background: proBg,
             padding: "3px 5px",
             borderRadius: 3,
             lineHeight: 1,
