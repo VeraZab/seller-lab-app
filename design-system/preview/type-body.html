@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Body type — Plus Jakarta Sans</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .card { gap: 14px; }
+  .h3 { font-family: var(--font-body); font-weight: 600; font-size: 22px; letter-spacing: -0.01em; color: var(--ink-900); line-height: 1.25; }
+  .body { font-family: var(--font-body); font-size: 15px; line-height: 1.6; color: var(--ink-700); max-width: 56ch; }
+  .small { font-size: 13px; color: var(--ink-500); line-height: 1.45; }
+  .meta-row {
+    display: flex;
+    gap: 18px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .meta-row .item { display: flex; flex-direction: column; gap: 2px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="h3">Find sharper keywords for every Spoonflower listing.</div>
+    <div class="body">Plus Jakarta Sans is the workhorse: friendly geometric sans with enough warmth to sit next to a serif and enough neutrality to disappear inside dense tables. Used for headings h3 and smaller, body copy, buttons, inputs, and labels.</div>
+    <div class="small">Small text falls to ink-500 for secondary information — timestamps, helper text, metadata strings.</div>
+    <div class="meta-row">
+      <div class="item"><span class="token-name">--font-body</span><span class="token">Plus Jakarta Sans · 300–800 + italic</span></div>
+      <div class="item"><span class="label">Base</span><span class="token">15px / 1.6 · ink-700</span></div>
+      <div class="item"><span class="label">Small</span><span class="token">13px / 1.45 · ink-500</span></div>
+    </div>
+  </div>
+</body>
+</html>

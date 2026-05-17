@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spacing scale</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .card { gap: 8px; }
+  .row {
+    display: grid;
+    grid-template-columns: 92px 50px 1fr;
+    align-items: center;
+    gap: 14px;
+    padding: 6px 0;
+  }
+  .token { font-family: var(--font-mono); font-size: 11px; color: var(--ink-900); }
+  .px { font-family: var(--font-mono); font-size: 11px; color: var(--ink-500); text-align: right; }
+  .bar { height: 14px; background: var(--slate-500); border-radius: 3px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size: 12px; color: var(--ink-500); margin-bottom: 4px;"><strong style="font-family:var(--font-body); font-weight:600; color:var(--ink-900);">Spacing</strong> — 4px base. Marketing is generous (96+). Product UI is tight (16–24).</div>
+    <div class="row"><span class="token">--space-1</span><span class="px">4</span><div class="bar" style="width:4px"></div></div>
+    <div class="row"><span class="token">--space-2</span><span class="px">8</span><div class="bar" style="width:8px"></div></div>
+    <div class="row"><span class="token">--space-3</span><span class="px">12</span><div class="bar" style="width:12px"></div></div>
+    <div class="row"><span class="token">--space-4</span><span class="px">16</span><div class="bar" style="width:16px"></div></div>
+    <div class="row"><span class="token">--space-6</span><span class="px">24</span><div class="bar" style="width:24px"></div></div>
+    <div class="row"><span class="token">--space-8</span><span class="px">32</span><div class="bar" style="width:32px"></div></div>
+    <div class="row"><span class="token">--space-12</span><span class="px">48</span><div class="bar" style="width:48px"></div></div>
+    <div class="row"><span class="token">--space-16</span><span class="px">64</span><div class="bar" style="width:64px"></div></div>
+    <div class="row"><span class="token">--space-20</span><span class="px">80</span><div class="bar" style="width:80px"></div></div>
+    <div class="row"><span class="token">--space-24</span><span class="px">96</span><div class="bar" style="width:96px"></div></div>
+  </div>
+</body>
+</html>

@@ -18,7 +18,7 @@ Planning document for the first paid release: Spoonflower Seller Lab + companion
 - **Extension** = primary surface. All feature UI lives here: keyword library, AI matching, sales import, analytics, buyers, etc.
 - **Website** = minimal — landing/pricing, magic-link auth callback, Stripe return URL, privacy/ToS. ~5 pages total. Exists because magic-link redirects, Stripe `success_url`, and legal pages all need real URLs (can't be `chrome-extension://`). Webapp UI versions of analytics/library/buyers deferred to Phase 2 if/when demand surfaces.
 - **Backend**: Supabase (Postgres + Auth + Storage + Edge Functions).
-- **AI**: Anthropic Claude Sonnet 4.6 (vision-capable).
+- **AI**: Google Gemini 2.5 Pro (vision-capable).
 - **Payments**: Stripe (Checkout + Customer Portal + Webhooks).
 - **Hosting**: Vercel for the website (free tier covers low traffic).
 
@@ -30,7 +30,7 @@ Planning document for the first paid release: Spoonflower Seller Lab + companion
 | Database | Supabase Postgres with RLS |
 | Auth | Supabase Auth (magic link) |
 | File storage | Supabase Storage (private bucket per user) |
-| AI proxy | Supabase Edge Function (Deno) calling Anthropic |
+| AI proxy | Supabase Edge Function (Deno) calling Gemini |
 | Website | Next.js or Vite + React on Vercel |
 | Payments | Stripe (subscription product, single Price; per-subscription Price object so future tiering grandfathers existing users) |
 | Domain | TBD (drives magic-link `redirectTo` and `externally_connectable` matches) |
@@ -54,7 +54,7 @@ Planning document for the first paid release: Spoonflower Seller Lab + companion
 1. **Right-click "Save to keywords"** — context menu on any site saves selection text directly to backend keyword library. Menu shows "(Pro)" disabled for free users.
 2. **Custom keyword library** (managed in extension): user's persistent vocabulary, sourced from right-click saves + manual entry. CRUD UI lives in a Library tab/section in the extension side panel.
 3. **Pre-populated starter library** (~100 seeded keywords from Spoonflower's taxonomy, immutable).
-4. **AI image-match** — user uploads an image in extension; Anthropic vision matches to keywords from their library; results populate buckets.
+4. **AI image-match** — user uploads an image in extension; Gemini vision matches to keywords from their library; results populate buckets.
 5. **Generative AI** (optional path) — same image without library context, AI suggests new keywords. Shared cap with image-match.
 6. **Color-coded buckets** — hierarchy: sales > likes > library > seeded > AI.
 7. **Sales-driven tag pull** — populates buckets with tags from sold designs (hot orange).
@@ -95,7 +95,7 @@ Planning document for the first paid release: Spoonflower Seller Lab + companion
 
 **Single tier at $10/mo, 100 AI calls/mo cap.**
 
-100 calls × ~$0.016/call = ~$1.60/user/mo worst-case API cost — well under the $2/user budget. Realistic usage (~40 unique designs/mo) means most users won't hit the cap; it functions as a sanity guard against runaway abuse, not as an upsell mechanic.
+100 calls × ~$0.009/call = ~$0.85/user/mo worst-case API cost — well under the $2/user budget. Realistic usage (~40 unique designs/mo) means most users won't hit the cap; it functions as a sanity guard against runaway abuse, not as an upsell mechanic.
 
 **Two-tier deferred** — tiering only makes sense when the cap is actually constraining real users and there's a feature worth charging more for. With 100-call generosity, the upgrade pressure is too weak to justify the implementation complexity now. Revisit when usage data justifies the split.
 
@@ -109,17 +109,18 @@ Planning document for the first paid release: Spoonflower Seller Lab + companion
 
 ## Color Hierarchy (word source ranking)
 
-Word state moves from `string[]` to `Map<word, Set<source>>`. When a word has multiple sources, **highest tier wins** for visual rendering.
+Word state moves from `string[]` to `Map<word, Set<source>>`. When a word has multiple sources, **highest tier wins** for visual rendering. Colors map to the design system's tag taxonomy (`design-system/components.css`).
 
-| Tier | Color (suggestion) | Source |
-|---|---|---|
-| 1 | Hot orange `#FF6B1A` | Sales |
-| 2 | Yellow `#FFD43B` | Likes |
-| 3 | Pink/coral `#FF8FA3` | Library (user-added custom) |
-| 4 | Soft teal `#7AC4B8` | Seeded (Spoonflower starters) |
-| 5 | Light blue `#A0CFE8` | AI-generated suggestions |
+| Tier | Token | Hex | Source | Design system class |
+|---|---|---|---|---|
+| 1 | `--sage-500` | `#8AAE92` | Sales | `chip--sales` / `dot-sales` |
+| 2 | `--blossom-500` | `#D77FA0` | Likes | `chip--liked` / `dot-liked` |
+| 3 | `--saffron-500` | `#E0A458` | Starred (user-saved + observed via right-click "Save to keywords") | `chip--starred` / `dot-starred` |
+| 4 | `--slate-500` | `#798BA6` | Seeded (Spoonflower starters) + scraped from live Spoonflower pages | `chip--system` / `dot-system` |
+| 5 | `--plum-500` | `#8B6FA8` | Trend research (user-driven keyword exploration) | `chip--trend` / `dot-trend` |
+| — | (default, no color) | — | AI-generated suggestions | `chip` (neutral) |
 
-Final hex values to validate against existing theme.
+AI suggestions render as the default neutral chip — no taxonomy color. They become categorized (and colored) only once the user saves them into a bucket or stars them.
 
 ---
 
@@ -527,34 +528,35 @@ These are accepted. Path B is a reasonable engineering trade-off, not a zero-ris
 
 ## Cost Analysis
 
-### Anthropic API per call (Sonnet 4.6 vision)
+### Gemini API per call (2.5 Pro vision)
 
 - Image (~1500 input tokens) + system prompt (~200) + library context (~1000) + per-call (~100) + output (~500)
-- **Uncached: ~$0.016/call. Cached: ~$0.013/call.**
-- Prompt caching cuts ~30% (image is uncacheable and dominates input).
+- **Uncached: ~$0.009/call. Cached: ~$0.007/call.**
+- Gemini context caching (75% discount on cached input tokens, 1hr default TTL) cuts ~20-30% on the cacheable portion (image is uncacheable and dominates input).
+- Pricing tier: ≤200k context window. Stays well within for this use case.
 
 ### Per user per month ($10/mo, 100 calls)
 
 | Item | Cost |
 |---|---|
 | Stripe fee | -$0.59 |
-| Anthropic API (100 × ~$0.016) | -$1.60 |
+| Gemini API (100 × ~$0.009) | -$0.85 |
 | Supabase | $0 on Free tier / -$2.50 amortized at 10 users on Pro |
 | Domain amortized | -$0.13 |
 | Storage growth | -$0.10-0.30 (bounded) |
-| **Net per user (Free tier)** | **~$7.70/mo on $10 revenue (77%)** |
-| **Net per user (Pro at 10 users)** | **~$5.20/mo on $10 revenue (52%)** |
+| **Net per user (Free tier)** | **~$8.45/mo on $10 revenue (85%)** |
+| **Net per user (Pro at 10 users)** | **~$5.95/mo on $10 revenue (60%)** |
 
 ### Single-tier model at scale ($10/mo, 100 calls)
 
 | Users | Tier | MRR | API | Stripe | Supabase | Total Costs | Net | Margin |
 |---|---|---|---|---|---|---|---|---|
-| 10 | Free | $100 | $16 | $5.90 | $0 | ~$23 | **~$77** | **77%** |
-| 30 | Pro | $300 | $48 | $17.70 | $25 | ~$92 | ~$208 | 69% |
-| 100 | Pro | $1,000 | $160 | $59 | $25 | ~$245 | ~$755 | 76% |
-| 1,000 | Pro | $10,000 | $1,600 | $590 | $25 | ~$2,215 | ~$7,785 | 78% |
+| 10 | Free | $100 | $8.50 | $5.90 | $0 | ~$15 | **~$85** | **85%** |
+| 30 | Pro | $300 | $25.50 | $17.70 | $25 | ~$69 | ~$231 | 77% |
+| 100 | Pro | $1,000 | $85 | $59 | $25 | ~$170 | ~$830 | 83% |
+| 1,000 | Pro | $10,000 | $850 | $590 | $25 | ~$1,470 | ~$8,530 | 85% |
 
-API stays ~16% of revenue across all scales (up from earlier 8% estimate at 50-call cap). Margin recovers once Supabase Pro flat-fee amortizes (~30 users) and stabilizes at ~75-80%.
+API stays ~8.5% of revenue across all scales. Margin recovers once Supabase Pro flat-fee amortizes (~30 users) and stabilizes at ~83-85%.
 
 ### Storage growth
 
@@ -632,7 +634,7 @@ Everything to have in place before (or during) Phase 1 development. Checkboxes t
 - [x] **Supabase project created** (account ≠ project — see config steps below)
 - [x] **Vercel account** + GitHub repo connected (needed by Build 2)
 - [ ] **Stripe account** — test mode is enough until Build 5. Live-mode prerequisites: verified business info, EIN/SSN, bank account
-- [ ] **Anthropic API key** with billing + monthly spend limit set (~$50/mo during dev, ~$200/mo live)
+- [ ] **Gemini API key** (Google AI Studio) with billing enabled + monthly spend limit set (~$25/mo during dev, ~$100/mo live)
 - [ ] **GitHub Actions enabled** on the repo (Build 21 — keep-alive cron)
 - [ ] *(Optional)* Resend or Postmark for transactional email — skip for v1, switch later if Supabase built-in email deliverability becomes an issue
 
@@ -657,10 +659,10 @@ These bite indie devs building Supabase + Stripe + Extension stacks. Commit to m
 
 1. **RLS on every user-scoped table, immediately on creation.** Write `ALTER TABLE ... ENABLE ROW LEVEL SECURITY;` in the *same migration* as the `CREATE TABLE`. Never defer it. The Supabase dashboard shows a red banner for tables with RLS off — never ignore.
 
-2. **Secrets only via environment variables.** `SUPABASE_SERVICE_ROLE_KEY`, Stripe secret, Anthropic API key, Stripe webhook secret — never in client-side code (extension JS, webapp public JS).
+2. **Secrets only via environment variables.** `SUPABASE_SERVICE_ROLE_KEY`, Stripe secret, Gemini API key, Stripe webhook secret — never in client-side code (extension JS, webapp public JS).
    - Local: `.env.local` (verify it's in `.gitignore`)
    - Vercel: Project Settings → Environment Variables
-   - Supabase Edge Functions: `supabase secrets set ANTHROPIC_API_KEY=...`
+   - Supabase Edge Functions: `supabase secrets set GEMINI_API_KEY=...`
 
 3. **Stripe webhook signature verification.** Every webhook handler must call:
    ```ts
@@ -686,14 +688,14 @@ These bite indie devs building Supabase + Stripe + Extension stacks. Commit to m
 
 9. **Privacy policy and ToS need real content.** Stripe and Chrome Web Store both require these as accessible URLs with actual content addressing:
    - What data you collect
-   - How you use it (including: "we send images to Anthropic for AI matching")
-   - Third-party processors (Supabase, Stripe, Anthropic)
+   - How you use it (including: "we send images to Google for AI matching via Gemini")
+   - Third-party processors (Supabase, Stripe, Google)
    - Data deletion process
    - Contact info for privacy questions
    
    TermsFeed or GetTerms generate decent boilerplate (~30 min to fill in for Build 2).
 
-10. **Set spending limits immediately.** Anthropic console: monthly cap. Stripe Dashboard: email alerts for unusual activity. Without these, a runaway loop in your code (or a malicious actor) could burn hundreds of dollars before you notice.
+10. **Set spending limits immediately.** Google Cloud console (where Gemini billing is managed): monthly budget alerts + hard cap. Stripe Dashboard: email alerts for unusual activity. Without these, a runaway loop in your code (or a malicious actor) could burn hundreds of dollars before you notice.
 
 ### Things that feel like gotchas but aren't
 
@@ -703,15 +705,17 @@ These bite indie devs building Supabase + Stripe + Extension stacks. Commit to m
 
 ### Recommended build order
 
-After Supabase config is done:
+After Supabase config is done. Build 1 and Build 2 are sliced for faster iteration — get the auth path working end-to-end before filling in the rest of the schema and webapp pages.
 
-1. **Build 1** (Supabase backbone) — unblocks everything
+1. **Build 1a — Auth foundation** (~2-4h): Supabase CLI setup, `profiles` table + RLS + auto-create-on-signup trigger, magic-link auth config. Minimum schema to support sign-in.
 2. **Build 21** (keep-alive cron) — 30 min, do early so the dev project doesn't pause during gaps
-3. **Build 2** (tiny webapp) — unblocks magic link auth flow
-4. **Build 3** (extension auth UI) — unblocks paid-feature gating
-5. **Build 5** (Stripe) — can defer until you actually need to test paid flows
-6. **Builds 4, 6, 7, 8** — order flexible; work on what's most fun
-7. **Builds 9-14** (Spoonflower-touching) — leave for last, once auth + Stripe foundation is solid and you can be a "paid user" in your own dev environment
+3. **Build 2a — Temporary webapp sign-in** (~2-3h): `/sign-in` page (magic link request) + `/auth/callback` route + `/dashboard` stub to verify session. Temporary scaffolding for testing auth before the extension auth UI lands.
+4. **Build 3** (extension auth UI) — unblocks paid-feature gating. Once landed, the temp `/sign-in` page from 2a is replaced by the extension's sign-in form (which calls `signInWithOtp` and uses the webapp `/auth/callback` for the redirect handoff).
+5. **Build 1b — Rest of schema** (~6-8h): all other tables (`user_keywords`, `system_keywords`, `ai_calls`, `enriched_designs`, `sales_events`, `activity_events`, `buyers`) + RLS + storage bucket + custom `chrome.storage` adapter for the extension.
+6. **Build 2b — Real webapp pages** (~5-9h): landing/pricing, Stripe return, privacy + ToS pages.
+7. **Build 5** (Stripe) — can defer until you actually need to test paid flows.
+8. **Builds 4, 6, 7, 8** — order flexible; work on what's most fun.
+9. **Builds 9-14** (Spoonflower-touching) — leave for last, once auth + Stripe foundation is solid and you can be a "paid user" in your own dev environment.
 
 ---
 
@@ -719,8 +723,8 @@ After Supabase config is done:
 
 | # | Build | Hours |
 |---|---|---|
-| 1 | Supabase project, schema + RLS, Auth (magic link), custom `chrome.storage` adapter | 8-12h |
-| 2 | Tiny webapp on Vercel: landing/pricing, `/auth/extension` callback (token handoff), Stripe return, privacy + ToS pages | 8-12h |
+| 1 | Supabase project, schema + RLS, Auth (magic link), custom `chrome.storage` adapter. **Typically sliced**: 1a = auth foundation (`profiles` + RLS + trigger + auth config, ~2-4h), 1b = rest of schema + storage bucket + chrome.storage adapter (~6-8h) | 8-12h |
+| 2 | Tiny webapp on Vercel: landing/pricing, `/auth/callback` (handles magic-link redirect, exchanges code for session, hands off to extension), Stripe return, privacy + ToS pages. **Typically sliced**: 2a = temporary `/sign-in` + `/auth/callback` + `/dashboard` stub for testing pre-extension (~2-3h), 2b = real landing/pricing + Stripe return + privacy + ToS (~5-9h) | 8-12h |
 | 3 | Extension auth UI (magic link request, token receipt via `externally_connectable`, signed-in/out state) | 6-10h |
 | 4 | Right-click "Save to keywords" (contextMenus, background script, direct backend save) | 3-5h |
 | 5 | Stripe single-tier setup, Checkout, webhook updating `profiles.plan` (per-subscription Price object so future tiering grandfathers cleanly) | 6-10h |
@@ -750,7 +754,7 @@ The total grew vs. the earlier estimate because we added concrete builds (timese
 
 ## Risks
 
-1. **Anthropic price changes** — Sonnet has been stable, but a 2× price increase would halve the margin on calls. Watch.
+1. **Gemini price changes** — Gemini 2.5 Pro pricing has been stable, but a 2× price increase would halve the margin on calls. Watch. Mitigation: code is structured so model is a single config — swap to Gemini 2.5 Flash (~4× cheaper) or another provider if needed.
 2. **Spoonflower DOM changes** — pull-from-page, sales scraping, likes scraping all depend on Spoonflower's HTML. Budget ~5h/quarter for maintenance.
 3. **Power user abuse** — mitigated by tier caps. Monitor `ai_calls` for spikes; alert on outliers.
 4. **Storage growth** — bounded by user behavior, not AI usage. R2 migration available if/when needed.

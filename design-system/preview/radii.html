@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Radii</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .card { gap: 14px; }
+  .row { display: flex; gap: 14px; align-items: flex-end; }
+  .item { flex: 1; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .shape {
+    width: 80px;
+    height: 60px;
+    background: #fff;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+  }
+  .name { font-family: var(--font-mono); font-size: 11px; color: var(--ink-900); }
+  .val { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-500); }
+  .meta { font-size: 12px; color: var(--ink-500); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="meta"><strong style="color:var(--ink-900); font-family:var(--font-body); font-weight:600;">Corner radii</strong> — 6–10px does most of the work. Pills for tag chips and capsule buttons. Never bigger than 20px.</div>
+    <div class="row">
+      <div class="item"><div class="shape" style="border-radius:4px"></div><span class="name">--radius-xs</span><span class="val">4px</span></div>
+      <div class="item"><div class="shape" style="border-radius:6px"></div><span class="name">--radius-sm</span><span class="val">6px</span></div>
+      <div class="item"><div class="shape" style="border-radius:10px"></div><span class="name">--radius-md</span><span class="val">10px ★</span></div>
+      <div class="item"><div class="shape" style="border-radius:14px"></div><span class="name">--radius-lg</span><span class="val">14px</span></div>
+      <div class="item"><div class="shape" style="border-radius:20px"></div><span class="name">--radius-xl</span><span class="val">20px</span></div>
+      <div class="item"><div class="shape" style="border-radius:999px"></div><span class="name">--radius-pill</span><span class="val">999px</span></div>
+    </div>
+    <div class="meta muted">★ default for cards, inputs, buttons. Pill for tag chips and counters.</div>
+  </div>
+</body>
+</html>

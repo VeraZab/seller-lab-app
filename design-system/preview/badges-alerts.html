@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Badges & Alerts</title>
+<link rel="stylesheet" href="../components.css">
+<style>
+  body { background: var(--bg); margin: 0; font-family: var(--font-body); }
+  .card { padding: 22px 28px; display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .alerts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="row">
+      <span class="badge">draft</span>
+      <span class="badge badge--info">listing</span>
+      <span class="badge badge--success">saved</span>
+      <span class="badge badge--warn">over limit</span>
+      <span class="badge badge--error">unpublished</span>
+      <span class="badge badge--pro">PRO</span>
+    </div>
+    <div class="alerts">
+      <div class="alert alert--info">
+        <div><div class="alert__title">Spoonflower changed your listing limit.</div>Each tag is now capped at 40 characters. Existing tags weren't touched.</div>
+      </div>
+      <div class="alert alert--success">
+        <div><div class="alert__title">14 tags saved to "Floral / cottagecore".</div></div>
+      </div>
+      <div class="alert alert--warn">
+        <div><div class="alert__title">Tag is over the limit.</div>"hand-illustrated cottagecore botanical" is 41 chars.</div>
+      </div>
+      <div class="alert alert--error">
+        <div><div class="alert__title">Couldn't reach Spoonflower.</div>Check your connection and try again.</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

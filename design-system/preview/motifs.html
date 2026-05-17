@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Motifs & brand glyph</title>
+<link rel="stylesheet" href="../components.css">
+<style>
+  body { background: var(--bg); margin: 0; font-family: var(--font-body); }
+  .wrap { padding: 22px 28px; display: flex; flex-direction: column; gap: 14px; }
+  .panel { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px; position: relative; overflow: hidden; }
+  .panel--cream { background: var(--parchment-100); }
+  .label { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-500); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 10px; }
+  .pattern {
+    position: absolute; inset: 0;
+    background-image: url('../assets/shimmer.svg');
+    background-size: 220px 220px;
+    background-repeat: repeat;
+  }
+  .bullet-row { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--ink-900); }
+  .bullet-row .item { display: flex; align-items: center; gap: 10px; }
+  .bullet-row .item img { width: 12px; height: 12px; display: block; }
+  .divider-motif { display: flex; align-items: center; gap: 12px; }
+  .divider-motif::before, .divider-motif::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .divider-motif img { width: 14px; height: 14px; display: block; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row3">
+      <div class="panel">
+        <div class="label">As a bullet</div>
+        <div class="bullet-row">
+          <div class="item"><img src="../assets/logo.svg" alt="">Keyword research</div>
+          <div class="item"><img src="../assets/logo.svg" alt="">Character budgeting</div>
+          <div class="item"><img src="../assets/logo.svg" alt="">Bucket organization</div>
+        </div>
+      </div>
+      <div class="panel panel--cream" style="display: flex; align-items: center; justify-content: center; padding: 28px 16px;">
+        <div class="divider-motif" style="width: 100%;">
+          <img src="../assets/logo.svg" alt="">
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="height: 140px;">
+      <div class="pattern"></div>
+      <div class="label" style="position: relative;">Shimmer watermark · tileable</div>
+      <div style="position: relative; font-family: var(--font-display); font-size: 22px; color: var(--ink-900); letter-spacing: -0.01em; line-height: 1.15; margin-top: 6px; max-width: 75%;">Logo quatrefoils at randomized scales, rotations, and opacities — a quiet textile shimmer for hero sections and empty states.</div>
+    </div>
+  </div>
+</body>
+</html>

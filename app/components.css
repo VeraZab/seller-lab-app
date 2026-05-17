@@ -1,0 +1,340 @@
+/* ============================================================
+   Spoonflower Seller Lab Pro — Component primitives
+   Reusable CSS classes for buttons, inputs, chips, cards, badges.
+   Tokens come from colors-and-type.css, imported by layout.tsx.
+   ============================================================ */
+
+/* --------------------- Buttons --------------------- */
+
+.btn {
+  --btn-bg: var(--slate-500);
+  --btn-bg-hover: var(--slate-600);
+  --btn-bg-press: var(--slate-700);
+  --btn-fg: #fff;
+  --btn-border: transparent;
+  --btn-pad-x: 16px;
+  --btn-pad-y: 9px;
+  --btn-fs: 14px;
+  --btn-radius: 10px;
+  --btn-weight: 600;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: var(--btn-pad-y) var(--btn-pad-x);
+  font-family: var(--font-body);
+  font-size: var(--btn-fs);
+  font-weight: var(--btn-weight);
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border: 1px solid var(--btn-border);
+  border-radius: var(--btn-radius);
+  cursor: pointer;
+  transition: background var(--dur-base) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  box-shadow: var(--shadow-xs);
+}
+.btn:hover { background: var(--btn-bg-hover); }
+.btn:active { background: var(--btn-bg-press); transform: scale(0.98); box-shadow: none; }
+.btn:focus-visible { outline: 2px solid var(--slate-300); outline-offset: 2px; }
+.btn:disabled { opacity: 0.4; pointer-events: none; }
+
+.btn--accent {
+  --btn-bg: var(--saffron-500);
+  --btn-bg-hover: var(--saffron-600);
+  --btn-bg-press: var(--saffron-700);
+  --btn-fg: var(--ink-900);
+}
+
+.btn--ghost {
+  --btn-bg: transparent;
+  --btn-bg-hover: var(--parchment-100);
+  --btn-bg-press: var(--parchment-200);
+  --btn-fg: var(--ink-900);
+  --btn-border: var(--border);
+  box-shadow: none;
+}
+
+.btn--text {
+  --btn-bg: transparent;
+  --btn-bg-hover: var(--parchment-100);
+  --btn-bg-press: var(--parchment-200);
+  --btn-fg: var(--ink-700);
+  --btn-border: transparent;
+  box-shadow: none;
+}
+
+.btn--danger {
+  --btn-bg: var(--brick-500);
+  --btn-bg-hover: var(--brick-700);
+  --btn-bg-press: var(--brick-700);
+}
+
+.btn--sm { --btn-fs: 12.5px; --btn-pad-x: 12px; --btn-pad-y: 6px; --btn-radius: 8px; }
+.btn--lg { --btn-fs: 15px; --btn-pad-x: 22px; --btn-pad-y: 13px; --btn-radius: 12px; }
+
+/* --------------------- Inputs --------------------- */
+
+.field-label {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-700);
+  margin-bottom: 6px;
+}
+
+.input,
+.select,
+.textarea {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--ink-900);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+  box-shadow: var(--shadow-xs);
+}
+.input::placeholder, .textarea::placeholder { color: var(--ink-300); }
+.input:hover, .select:hover, .textarea:hover { border-color: var(--slate-300); }
+.input:focus, .select:focus, .textarea:focus {
+  border-color: var(--slate-500);
+  box-shadow: 0 0 0 3px rgba(121, 139, 166, 0.18);
+}
+.input--with-icon { padding-left: 36px; }
+.field-icon-wrap { position: relative; }
+.field-icon-wrap > .lucide { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--ink-500); pointer-events: none; }
+
+.help { font-size: 12px; color: var(--ink-500); margin-top: 6px; }
+.help--error { color: var(--brick-700); }
+
+/* --------------------- Tag chips (brand keystone) --------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-900);
+  cursor: pointer;
+  transition: background var(--dur-base) var(--ease-out),
+              border-color var(--dur-base) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+  box-shadow: var(--shadow-xs);
+}
+.chip:hover { background: var(--parchment-100); border-color: var(--slate-300); }
+.chip:active { transform: scale(0.97); }
+.chip .x { color: var(--ink-300); font-size: 14px; line-height: 1; }
+.chip .x:hover { color: var(--brick-500); }
+
+.chip--solid { background: var(--slate-500); border-color: var(--slate-500); color: #fff; }
+.chip--solid:hover { background: var(--slate-600); }
+.chip--accent { background: var(--saffron-100); border-color: var(--saffron-300); color: var(--saffron-700); }
+.chip--success { background: var(--sage-100); border-color: var(--sage-500); color: var(--sage-700); }
+.chip--warn { background: var(--saffron-100); border-color: var(--saffron-500); color: var(--saffron-700); }
+.chip--ghost { background: transparent; border-style: dashed; color: var(--ink-500); }
+
+/* Tag taxonomy — product-domain signals. Use the dot variant for indication
+   inside lists; use the solid-tint variant for category-only filters. */
+.chip--liked   { background: var(--blossom-100); border-color: var(--blossom-300); color: var(--blossom-700); }
+.chip--sales   { background: var(--sage-100);    border-color: var(--sage-500);    color: var(--sage-700); }
+.chip--system  { background: var(--slate-100);   border-color: var(--slate-300);   color: var(--slate-700); }
+.chip--trend   { background: var(--plum-100);    border-color: var(--plum-300);    color: var(--plum-700); }
+.chip--starred { background: var(--saffron-100); border-color: var(--saffron-300); color: var(--saffron-700); }
+
+/* Dot variant — neutral chip with a colored leading dot. Use this when
+   showing tags in a list and the taxonomy is supplementary information. */
+.chip--dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--chip-dot, var(--ink-300));
+  margin-right: 2px;
+}
+.chip--dot.dot-liked   { --chip-dot: var(--blossom-500); }
+.chip--dot.dot-sales   { --chip-dot: var(--sage-500); }
+.chip--dot.dot-system  { --chip-dot: var(--slate-500); }
+.chip--dot.dot-trend   { --chip-dot: var(--plum-500); }
+.chip--dot.dot-starred { --chip-dot: var(--saffron-500); }
+
+.chip__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-500);
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+  margin-left: 2px;
+}
+
+/* --------------------- Cards --------------------- */
+
+.s-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-6);
+}
+
+.s-card--tinted {
+  background: var(--parchment-100);
+  border-color: var(--parchment-200);
+  box-shadow: none;
+}
+
+.s-card--flat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  padding: var(--space-6);
+}
+
+/* --------------------- Badges --------------------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-family: var(--font-body);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-radius: 999px;
+  background: var(--parchment-100);
+  color: var(--ink-700);
+  border: 1px solid var(--parchment-200);
+}
+.badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.6;
+}
+.badge--success { background: var(--sage-100); color: var(--sage-700); border-color: rgba(138,174,146,0.4); }
+.badge--warn    { background: var(--saffron-100); color: var(--saffron-700); border-color: rgba(224,164,88,0.4); }
+.badge--error   { background: var(--brick-100); color: var(--brick-700); border-color: rgba(194,84,80,0.3); }
+.badge--info    { background: var(--slate-100); color: var(--slate-700); border-color: var(--slate-200); }
+.badge--pro     { background: var(--ink-900); color: var(--saffron-300); border-color: var(--ink-900); }
+.badge--pro::before { display: none; }
+
+/* --------------------- Alerts --------------------- */
+
+.alert {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--parchment-100);
+  border: 1px solid var(--parchment-200);
+  color: var(--ink-700);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.alert__title { font-weight: 600; color: var(--ink-900); margin-bottom: 2px; }
+.alert--info    { background: var(--slate-50); border-color: var(--slate-200); }
+.alert--success { background: var(--sage-100); border-color: rgba(138,174,146,0.45); color: var(--sage-700); }
+.alert--warn    { background: var(--saffron-50); border-color: rgba(224,164,88,0.4); color: var(--saffron-700); }
+.alert--error   { background: var(--brick-100); border-color: rgba(194,84,80,0.4); color: var(--brick-700); }
+
+/* --------------------- Avatars / brand mark --------------------- */
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--slate-500);
+}
+.brand-mark svg { width: 100%; height: 100%; }
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--ink-900);
+  letter-spacing: -0.01em;
+}
+.brand-lockup .lockup__pro {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--saffron-700);
+  background: var(--saffron-100);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 2px;
+  transform: translateY(-1px);
+}
+
+/* --------------------- Quatrefoil bullet --------------------- */
+
+.quat-bullet {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: -0.1em;
+  margin-right: 8px;
+  color: var(--slate-500);
+}
+.quat-bullet svg { width: 100%; height: 100%; display: block; }
+
+/* --------------------- Utility --------------------- */
+
+.eyebrow {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--slate-600);
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: none;
+}
+
+.divider--motif {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--slate-400);
+}
+.divider--motif::before, .divider--motif::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.divider--motif svg { width: 14px; height: 14px; }

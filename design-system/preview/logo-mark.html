@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Logo & lockup</title>
+<link rel="stylesheet" href="../components.css">
+<style>
+  body { background: var(--bg); margin: 0; font-family: var(--font-body); }
+  .wrap { padding: 22px 28px; display: grid; grid-template-columns: 200px 1fr; gap: 22px; align-items: center; }
+  .panel {
+    display: flex; align-items: center; justify-content: center;
+    aspect-ratio: 1 / 1;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: #fff;
+    padding: 18px;
+  }
+  .panel--cream { background: var(--parchment-100); border-color: var(--parchment-200); }
+  .panel--dark { background: var(--ink-900); border-color: var(--ink-900); }
+  .panel--brand { background: var(--slate-500); border-color: var(--slate-500); }
+  .panel img { width: 100%; height: auto; display: block; }
+  .panel--dark img, .panel--brand img {
+    /* Invert + remap to parchment-50 (#FBF8F2) for on-dark / on-brand placements */
+    filter: brightness(0) saturate(100%) invert(98%) sepia(7%) saturate(380%) hue-rotate(348deg) brightness(101%) contrast(96%);
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .row .panel { aspect-ratio: 1; padding: 16px; border-radius: 12px; }
+  .lockup-stack { display: flex; flex-direction: column; gap: 12px; }
+  .meta { font-size: 12px; color: var(--ink-500); line-height: 1.5; }
+  .meta strong { color: var(--ink-900); font-weight: 600; }
+
+  .lockup {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-family: var(--font-display); font-weight: 500;
+    font-size: 19px; color: var(--ink-900);
+    letter-spacing: -0.01em; line-height: 1;
+  }
+  .lockup .mark { width: 26px; height: 26px; display: block; }
+  .lockup .pro {
+    display: inline-block;
+    font-family: var(--font-body); font-weight: 700;
+    font-size: 9.5px; letter-spacing: 0.16em;
+    color: var(--saffron-700); background: var(--saffron-100);
+    padding: 3px 5px; border-radius: 3px; line-height: 1;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <img src="../assets/logo.svg" alt="Spoonflower Seller Lab Pro logo" style="width: 78%;">
+    </div>
+    <div class="lockup-stack">
+      <div class="lockup">
+        <span class="mark"><img src="../assets/logo.svg" alt=""></span>
+        Seller&nbsp;Lab
+        <span class="pro">PRO</span>
+      </div>
+      <div class="row">
+        <div class="panel panel--cream"><img src="../assets/logo.svg" alt="" style="width: 70%;"></div>
+        <div class="panel panel--dark"><img src="../assets/logo.svg" alt="" style="width: 70%;"></div>
+        <div class="panel panel--brand"><img src="../assets/logo.svg" alt="" style="width: 70%;"></div>
+      </div>
+      <div class="meta">Single canonical SVG at <strong>assets/logo.svg</strong> (506 bytes) — used identically across all panels. On dark and brand backgrounds, recolored to parchment-50 via CSS <code>filter</code>. <strong>assets/logo-current.svg</strong> is the same path with <code>fill="currentColor"</code> for inline placements that need CSS color inheritance.</div>
+    </div>
+  </div>
+</body>
+</html>

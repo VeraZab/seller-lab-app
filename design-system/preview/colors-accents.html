@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colors — Accents & Semantic</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .card { gap: 14px; }
+  .group { display: flex; flex-direction: column; gap: 6px; }
+  .group-title { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--ink-500); }
+  .group-title strong { font-family: var(--font-body); font-weight: 600; font-size: 13px; color: var(--ink-900); }
+  .row { display: flex; gap: 6px; }
+  .sw { flex: 1; height: 50px; border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid rgba(20,24,42,0.06); }
+  .sw .step { font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; }
+  .sw .hex { font-family: var(--font-mono); font-size: 9.5px; opacity: 0.7; text-transform: uppercase; }
+  .light { color: rgba(20,24,42,0.85); }
+  .dark { color: rgba(255,255,255,0.9); }
+  .footer { font-size: 11.5px; color: var(--ink-500); padding-top: 6px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="group">
+      <div class="group-title"><strong>Saffron</strong><span>CTAs · highlights · use ≤ 10% of a screen</span></div>
+      <div class="row">
+        <div class="sw light" style="background:#FBF1DD"><span class="step">50</span><span class="hex">#FBF1DD</span></div>
+        <div class="sw light" style="background:#F6E2B5"><span class="step">100</span><span class="hex">#F6E2B5</span></div>
+        <div class="sw light" style="background:#ECC274"><span class="step">300</span><span class="hex">#ECC274</span></div>
+        <div class="sw dark" style="background:#E0A458"><span class="step">500</span><span class="hex">#E0A458</span></div>
+        <div class="sw dark" style="background:#C68A3D"><span class="step">600</span><span class="hex">#C68A3D</span></div>
+        <div class="sw dark" style="background:#9E6C2B"><span class="step">700</span><span class="hex">#9E6C2B</span></div>
+      </div>
+    </div>
+    <div class="group">
+      <div class="group-title"><strong>Sage</strong><span>success · "saved" · also "most sales" tag</span></div>
+      <div class="row">
+        <div class="sw light" style="background:#E0EBDD"><span class="step">100</span><span class="hex">#E0EBDD</span></div>
+        <div class="sw dark" style="background:#8AAE92"><span class="step">500</span><span class="hex">#8AAE92</span></div>
+        <div class="sw dark" style="background:#4F7858"><span class="step">700</span><span class="hex">#4F7858</span></div>
+      </div>
+    </div>
+    <div class="group">
+      <div class="group-title"><strong>Brick</strong><span>error · destructive</span></div>
+      <div class="row">
+        <div class="sw light" style="background:#F5DCD8"><span class="step">100</span><span class="hex">#F5DCD8</span></div>
+        <div class="sw dark" style="background:#C25450"><span class="step">500</span><span class="hex">#C25450</span></div>
+        <div class="sw dark" style="background:#8B3431"><span class="step">700</span><span class="hex">#8B3431</span></div>
+      </div>
+    </div>
+    <div class="footer">Saffron = CTA & warn. Sage = success/saved (and "most sales" tag taxonomy). Brick = error/destructive. See the <strong>Tag taxonomy</strong> card for the four product-domain tag signals.</div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Display type — Newsreader</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .card { gap: 14px; }
+  .display-xxl {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 76px;
+    line-height: 0.96;
+    letter-spacing: -0.025em;
+    color: var(--ink-900);
+  }
+  .display-xxl em { font-weight: 400; }
+  .display-md {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 32px;
+    line-height: 1.06;
+    letter-spacing: -0.018em;
+    color: var(--ink-900);
+  }
+  .meta-row {
+    display: flex;
+    gap: 18px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .meta-row .item { display: flex; flex-direction: column; gap: 2px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="display-xxl">Your shop, <em>sharper.</em></div>
+    <div class="display-md">Newsreader, the editorial display face.</div>
+    <div class="meta-row">
+      <div class="item"><span class="token-name">--font-display</span><span class="token">Newsreader · Google Fonts</span></div>
+      <div class="item"><span class="label">Weights</span><span class="token">300 / 400 / 500 / 600 / 700 + italic</span></div>
+      <div class="item"><span class="label">Tracking</span><span class="token">−2.5% at display, −1.8% at h2</span></div>
+      <div class="item"><span class="label">Use for</span><span class="token">h1, h2, hero numerals, pull-quotes</span></div>
+    </div>
+  </div>
+</body>
+</html>

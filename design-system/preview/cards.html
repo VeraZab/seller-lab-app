@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cards</title>
+<link rel="stylesheet" href="../components.css">
+<style>
+  body { background: var(--bg); margin: 0; font-family: var(--font-body); }
+  .wrap { padding: 24px 28px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .s-card, .s-card--tinted, .s-card--flat { padding: 14px 16px; }
+  .s-card h4, .s-card--tinted h4, .s-card--flat h4 { margin: 0; font-family: var(--font-body); font-weight: 600; font-size: 14px; color: var(--ink-900); }
+  .s-card p, .s-card--tinted p, .s-card--flat p { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-500); }
+  .label-row { display: flex; justify-content: space-between; align-items: center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="s-card">
+      <div class="label-row"><h4>Default card</h4><span class="badge badge--info">listing</span></div>
+      <p>White surface, hairline border, soft paper-shadow. Used for keyword rows, listings, dashboard cells.</p>
+    </div>
+    <div class="s-card--tinted">
+      <div class="label-row"><h4>Tinted card</h4><span class="badge">tip</span></div>
+      <p>Warm parchment-100 fill. No shadow. Used for callouts, empty states, "what's new" notes.</p>
+    </div>
+    <div class="s-card--flat">
+      <div class="label-row"><h4>Flat card</h4><span class="badge badge--pro">pro</span></div>
+      <p>Border only, no shadow. Used in dense grids where shadow stacking would create noise.</p>
+    </div>
+  </div>
+</body>
+</html>

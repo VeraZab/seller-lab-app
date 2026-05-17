@@ -1,0 +1,289 @@
+/* ============================================================
+   Spoonflower Seller Lab Pro — Colors & Type
+   The brand DNA in CSS variables.
+   Fonts load via next/font in app/layout.tsx; the
+   --font-display / --font-body / --font-mono families below are
+   overridden there to point at the self-hosted Next.js font vars.
+   ============================================================ */
+
+:root {
+  /* --------------------------------------------------------
+     COLOR — Slate (primary, lifted from the logo #798BA6)
+     -------------------------------------------------------- */
+  --slate-50:  #F2F4F7;
+  --slate-100: #E4E8EE;
+  --slate-200: #C8D0DC;
+  --slate-300: #ABB6C8;
+  --slate-400: #92A0B6;
+  --slate-500: #798BA6;   /* logo color */
+  --slate-600: #61708A;
+  --slate-700: #4A576D;
+  --slate-800: #343E50;
+  --slate-900: #1E2536;
+
+  /* --------------------------------------------------------
+     COLOR — Parchment (warm neutrals, the page background)
+     -------------------------------------------------------- */
+  --parchment-50:  #FBF8F2;   /* page bg */
+  --parchment-100: #F4EEE2;   /* card alt bg */
+  --parchment-200: #EBE2D0;   /* hairline / divider on cream */
+  --parchment-300: #D9CBB0;
+  --parchment-400: #B8A685;
+  --parchment-500: #9A8765;
+
+  /* --------------------------------------------------------
+     COLOR — Ink (deep text + canvas in dark mode)
+     -------------------------------------------------------- */
+  --ink-900: #14182A;   /* primary text */
+  --ink-700: #2E3550;
+  --ink-500: #5A627C;
+  --ink-300: #8A92AC;
+
+  /* --------------------------------------------------------
+     COLOR — Saffron (CTA / highlight accent)
+     -------------------------------------------------------- */
+  --saffron-50:  #FBF1DD;
+  --saffron-100: #F6E2B5;
+  --saffron-300: #ECC274;
+  --saffron-500: #E0A458;   /* primary accent */
+  --saffron-600: #C68A3D;
+  --saffron-700: #9E6C2B;
+
+  /* --------------------------------------------------------
+     COLOR — Semantic
+     -------------------------------------------------------- */
+  --sage-100:    #E0EBDD;
+  --sage-500:    #8AAE92;   /* success */
+  --sage-700:    #4F7858;
+
+  --brick-100:   #F5DCD8;
+  --brick-500:   #C25450;   /* error */
+  --brick-700:   #8B3431;
+
+  --indigo-500:  #4F5D8E;   /* info / link */
+  --indigo-700:  #2E3A66;
+
+  /* --------------------------------------------------------
+     COLOR — Tag taxonomy (product-specific signals)
+     blossom = "most liked"           (pink, heart signal)
+     sage    = "most sales"           (reuses --sage)
+     slate   = "from Spoonflower"     (reuses --slate, official-source)
+     plum    = "trend research"       (purple, discovery signal)
+     saffron = "starred / intuition"  (reuses --saffron; user-saved & observed)
+     -------------------------------------------------------- */
+  --blossom-100: #F8DDE5;
+  --blossom-300: #E9A8BC;
+  --blossom-500: #D77FA0;   /* most liked */
+  --blossom-700: #9B4365;
+
+  --plum-100:    #E5DEEC;
+  --plum-300:    #B7A4CB;
+  --plum-500:    #8B6FA8;   /* trend research */
+  --plum-700:    #5C4476;
+
+  /* --------------------------------------------------------
+     COLOR — Semantic aliases for everyday use
+     -------------------------------------------------------- */
+  --bg:           var(--parchment-50);
+  --bg-alt:       var(--parchment-100);
+  --bg-inverse:   var(--ink-900);
+  --surface:      #FFFFFF;
+  --surface-tint: var(--parchment-100);
+
+  --fg:           var(--ink-900);
+  --fg-muted:     var(--ink-500);
+  --fg-subtle:    var(--ink-300);
+  --fg-on-dark:   var(--parchment-50);
+
+  --border:       var(--parchment-200);
+  --border-strong:var(--slate-200);
+  --hairline:     rgba(20, 24, 42, 0.08);
+
+  --brand:        var(--slate-500);
+  --brand-ink:    var(--slate-700);
+  --accent:       var(--saffron-500);
+  --accent-ink:   var(--saffron-700);
+
+  --success:      var(--sage-500);
+  --warning:      var(--saffron-500);
+  --error:        var(--brick-500);
+  --info:         var(--indigo-500);
+
+  /* --------------------------------------------------------
+     TYPE — Families
+     The --font-* variables here are fallbacks. layout.tsx overrides
+     them with next/font's generated CSS variables (--next-display etc).
+     -------------------------------------------------------- */
+  --font-display: var(--next-display, 'Newsreader'), 'Iowan Old Style', Georgia, serif;
+  --font-body:    var(--next-body, 'Plus Jakarta Sans'), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:    var(--next-mono, 'JetBrains Mono'), ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* --------------------------------------------------------
+     TYPE — Scale (modular, base 16)
+     -------------------------------------------------------- */
+  --fs-xs:   12px;
+  --fs-sm:   13px;
+  --fs-base: 15px;
+  --fs-md:   17px;
+  --fs-lg:   20px;
+  --fs-xl:   24px;
+  --fs-2xl:  32px;
+  --fs-3xl:  44px;
+  --fs-4xl:  60px;
+  --fs-5xl:  84px;
+
+  /* --------------------------------------------------------
+     SPACING (4px base)
+     -------------------------------------------------------- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* --------------------------------------------------------
+     RADII
+     -------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* --------------------------------------------------------
+     SHADOWS — soft, paper-like, never blue
+     -------------------------------------------------------- */
+  --shadow-xs:  0 1px 0 rgba(20,24,42,0.04);
+  --shadow-sm:  0 1px 2px rgba(20,24,42,0.06), 0 1px 1px rgba(20,24,42,0.04);
+  --shadow-md:  0 6px 14px -6px rgba(20,24,42,0.10), 0 2px 4px rgba(20,24,42,0.05);
+  --shadow-lg:  0 18px 32px -12px rgba(20,24,42,0.16), 0 6px 12px -6px rgba(20,24,42,0.08);
+  --shadow-inset-hairline: inset 0 0 0 1px rgba(20,24,42,0.06);
+
+  /* --------------------------------------------------------
+     MOTION
+     -------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 360ms;
+}
+
+/* ============================================================
+   SEMANTIC TYPE — opinionated defaults
+   ============================================================ */
+
+html, body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.h-display, h1.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--fs-5xl);
+  line-height: 0.96;
+  letter-spacing: -0.025em;
+  color: var(--ink-900);
+  font-optical-sizing: auto;
+}
+
+h1, .h1 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--fs-4xl);
+  line-height: 1.02;
+  letter-spacing: -0.022em;
+  color: var(--ink-900);
+}
+
+h2, .h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--fs-3xl);
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  color: var(--ink-900);
+}
+
+h3, .h3 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-xl);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--ink-900);
+}
+
+h4, .h4 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-md);
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+  color: var(--ink-900);
+}
+
+.eyebrow {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--slate-600);
+}
+
+p, .body {
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  color: var(--ink-700);
+  text-wrap: pretty;
+}
+
+.lead {
+  font-family: var(--font-body);
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+  color: var(--ink-700);
+  font-weight: 400;
+}
+
+.small, small {
+  font-size: var(--fs-sm);
+  color: var(--ink-500);
+  line-height: 1.45;
+}
+
+.caption {
+  font-size: var(--fs-xs);
+  color: var(--ink-500);
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+
+code, .mono, kbd {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  font-feature-settings: 'ss01', 'cv02';
+}
+
+.serif-italic {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 400;
+}

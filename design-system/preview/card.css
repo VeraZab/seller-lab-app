@@ -1,0 +1,71 @@
+/* Common styles for design system preview cards.
+   Each card is shown at ~700px wide in the Design System tab.
+   Cards are flush — no header/title (the asset name is rendered outside). */
+
+@import url('../colors_and_type.css');
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+}
+
+.card {
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.swatch {
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.swatch-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.token {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-500);
+  letter-spacing: 0.02em;
+}
+
+.token-name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-900);
+  font-weight: 500;
+}
+
+.label {
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  color: var(--ink-700);
+  font-weight: 500;
+}
+
+.muted {
+  color: var(--ink-500);
+}
+
+.hex {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-500);
+  text-transform: uppercase;
+}

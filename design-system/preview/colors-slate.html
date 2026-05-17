@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colors — Slate (primary)</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .card { gap: 14px; }
+  .row { display: flex; gap: 8px; }
+  .swatch { flex: 1; height: 92px; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid rgba(20,24,42,0.06); }
+  .step { font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+  .hex { font-family: var(--font-mono); font-size: 10px; opacity: 0.75; text-transform: uppercase; }
+  .meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--ink-500); }
+  .meta strong { color: var(--ink-900); font-weight: 600; }
+  .light { color: rgba(20,24,42,0.85); }
+  .dark { color: rgba(255,255,255,0.9); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="meta"><strong>Slate</strong><span>primary brand · lifted from logo</span></div>
+    <div class="row">
+      <div class="swatch light" style="background:#F2F4F7"><span class="step">50</span><span class="hex">#F2F4F7</span></div>
+      <div class="swatch light" style="background:#E4E8EE"><span class="step">100</span><span class="hex">#E4E8EE</span></div>
+      <div class="swatch light" style="background:#C8D0DC"><span class="step">200</span><span class="hex">#C8D0DC</span></div>
+      <div class="swatch light" style="background:#ABB6C8"><span class="step">300</span><span class="hex">#ABB6C8</span></div>
+      <div class="swatch dark" style="background:#92A0B6"><span class="step">400</span><span class="hex">#92A0B6</span></div>
+      <div class="swatch dark" style="background:#798BA6; box-shadow: 0 0 0 2px var(--ink-900) inset, 0 0 0 4px #fff inset;"><span class="step">500★</span><span class="hex">#798BA6</span></div>
+      <div class="swatch dark" style="background:#61708A"><span class="step">600</span><span class="hex">#61708A</span></div>
+      <div class="swatch dark" style="background:#4A576D"><span class="step">700</span><span class="hex">#4A576D</span></div>
+      <div class="swatch dark" style="background:#343E50"><span class="step">800</span><span class="hex">#343E50</span></div>
+      <div class="swatch dark" style="background:#1E2536"><span class="step">900</span><span class="hex">#1E2536</span></div>
+    </div>
+    <div class="meta"><span class="muted">★ slate-500 is the logo color, used for filled brand surfaces</span><span class="token">--slate-50 … --slate-900</span></div>
+  </div>
+</body>
+</html>

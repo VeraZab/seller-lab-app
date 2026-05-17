@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mono type — JetBrains Mono</title>
+<link rel="stylesheet" href="card.css">
+<style>
+  .card { gap: 16px; }
+  .mono-lg { font-family: var(--font-mono); font-size: 24px; color: var(--ink-900); font-weight: 500; letter-spacing: -0.01em; }
+  .mono-row { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 13px; color: var(--ink-700); }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 10px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-900);
+  }
+  .counter {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--ink-700);
+    background: var(--parchment-100);
+    padding: 4px 9px;
+    border-radius: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .counter strong { color: var(--ink-900); }
+  .meta-row {
+    display: flex;
+    gap: 18px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .meta-row .item { display: flex; flex-direction: column; gap: 2px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mono-lg">14 / 40 chars · 7 buckets</div>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+      <span class="chip">cottagecore</span>
+      <span class="chip">botanical</span>
+      <span class="chip">vintage floral</span>
+      <span class="chip">moody</span>
+      <span class="counter"><strong>142</strong>&nbsp;keywords</span>
+    </div>
+    <div class="meta-row">
+      <div class="item"><span class="token-name">--font-mono</span><span class="token">JetBrains Mono · 400 / 500 / 600</span></div>
+      <div class="item"><span class="label">Use for</span><span class="token">tag chips, char counters, code, table numerals</span></div>
+      <div class="item"><span class="label">Features</span><span class="token">tabular-nums for stable column widths</span></div>
+    </div>
+  </div>
+</body>
+</html>
