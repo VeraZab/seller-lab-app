@@ -112,7 +112,11 @@ function Hero() {
           }}
         >
           The Spoonflower seller tools you wish you had, right in your
-          browser bar: <br/> analytics, strategic design suggestions, enhanced keyword strategy and customer relationship memory. 
+          browser bar:
+          <br />
+          Know your bestsellers. Track the keywords that convert. Build your
+          own keyword library with the language your buyers actually use. <br/>See
+          who bought what, and when.
         </p>
         <div
           style={{
