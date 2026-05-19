@@ -329,9 +329,7 @@ function SentState({
           <strong style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
             {email}
           </strong>
-          . Open it in this browser to finish signing in. If you&rsquo;re
-          reading email on a different device, use the 6-digit code from the
-          same email instead.
+          . Open it in this browser to finish signing in.
         </div>
       </div>
 
@@ -353,7 +351,7 @@ function SentState({
             alignSelf: "flex-start",
           }}
         >
-          Have the 6-digit code? Enter it here.
+          Or have the 6-digit code? Enter it here.
         </button>
       ) : (
         <form
