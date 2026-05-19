@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BrandLockup } from "@/components/brand";
 import { Icon } from "@/components/icon";
@@ -17,6 +17,14 @@ type Status =
   | { kind: "error"; message: string };
 
 export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInPageInner />
+    </Suspense>
+  );
+}
+
+function SignInPageInner() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/workspace";
   const callbackError = searchParams.get("error");
