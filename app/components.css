@@ -77,6 +77,17 @@
   --btn-bg-press: var(--brick-700);
 }
 
+/* Pro upsell — saffron-outlined, saffron text. Use for "Get PRO" / upgrade CTAs. */
+.btn--pro {
+  --btn-bg: transparent;
+  --btn-bg-hover: var(--saffron-50);
+  --btn-bg-press: var(--saffron-100);
+  --btn-fg: var(--saffron-700);
+  --btn-border: var(--saffron-500);
+  box-shadow: none;
+  letter-spacing: 0.02em;
+}
+
 .btn--sm { --btn-fs: 12.5px; --btn-pad-x: 12px; --btn-pad-y: 6px; --btn-radius: 8px; }
 .btn--lg { --btn-fs: 15px; --btn-pad-x: 22px; --btn-pad-y: 13px; --btn-radius: 12px; }
 
@@ -243,8 +254,9 @@
 
 .alert {
   display: flex;
-  gap: 12px;
-  padding: 12px 14px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
   border-radius: 10px;
   background: var(--parchment-100);
   border: 1px solid var(--parchment-200);

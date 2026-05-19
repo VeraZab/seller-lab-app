@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { BrandLockup } from "@/components/brand";
+import { createClient } from "@/lib/supabase/server";
 
 const navLinkStyle = {
   color: "var(--ink-700)",
@@ -29,7 +30,13 @@ const footerLinkStyle = {
   cursor: "pointer",
 };
 
-function Nav() {
+async function Nav() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const isSignedIn = !!user;
+
   return (
     <nav
       style={{
@@ -64,12 +71,20 @@ function Nav() {
           </Link>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <Link href="/sign-in" style={navLinkStyle}>
-            Sign in
-          </Link>
-          <Link href="/workspace" className="btn">
-            Open app
-          </Link>
+          {isSignedIn ? (
+            <Link href="/workspace" className="btn">
+              Open app
+            </Link>
+          ) : (
+            <>
+              <Link href="/#pricing" className="btn btn--pro">
+                Get PRO
+              </Link>
+              <Link href="/sign-in" className="btn">
+                Sign in
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </nav>

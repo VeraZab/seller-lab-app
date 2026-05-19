@@ -17,7 +17,9 @@ type IconName =
   | "star"
   | "sort"
   | "flask"
-  | "link";
+  | "link"
+  | "mail"
+  | "logout";
 
 type IconProps = {
   name: IconName;
@@ -162,6 +164,21 @@ export function Icon({ name, size = 16, color, className }: IconProps) {
         <svg {...common}>
           <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7.07-7.07L11.5 5" />
           <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7.07 7.07l1.93-1.93" />
+        </svg>
+      );
+    case "mail":
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="m3 7 9 6 9-6" />
+        </svg>
+      );
+    case "logout":
+      return (
+        <svg {...common}>
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <path d="m16 17 5-5-5-5" />
+          <path d="M21 12H9" />
         </svg>
       );
     default:

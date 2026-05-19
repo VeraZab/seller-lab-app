@@ -65,3 +65,15 @@ svg {
     transform: scale(1) !important;
   }
 }
+
+/* Loading spinner — applied to any icon during in-flight async work. */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 900ms linear infinite;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none !important; }
+}

@@ -16,7 +16,19 @@ Planning document for the first paid release: Spoonflower Seller Lab + companion
 ## Architecture
 
 - **Extension** = primary surface. All feature UI lives here: keyword library, AI matching, sales import, analytics, buyers, etc.
-- **Website** = minimal — landing/pricing, magic-link auth callback, Stripe return URL, privacy/ToS. ~5 pages total. Exists because magic-link redirects, Stripe `success_url`, and legal pages all need real URLs (can't be `chrome-extension://`). Webapp UI versions of analytics/library/buyers deferred to Phase 2 if/when demand surfaces.
+- **Website** = minimal but real. Hosts sign-in for returning paid users, Stripe Checkout entry, post-checkout return, the extension's session-handoff target, plus marketing and legal pages. Webapp UI versions of analytics/library/buyers deferred to Phase 2 if/when demand surfaces. Route inventory:
+
+  | Route | Purpose |
+  |---|---|
+  | `/` | Landing + pricing + FAQ |
+  | `/sign-in` | Returning customer sign-in (paid users only — `shouldCreateUser: false`). New users see a "No PRO account found" state with a "Get PRO" CTA to `/#pricing`. |
+  | `/auth/callback` | Magic-link code exchange → redirects to `?next` (default `/workspace`) |
+  | `/workspace` | Pro user dashboard (server-gated; free/no-plan users redirect to `/#pricing`) |
+  | `/api/checkout` | Creates a Stripe Checkout Session anonymously, redirects to Stripe |
+  | `/welcome` | Stripe `success_url`. Server-verifies the session, creates the Supabase user via admin API, generates a magic-link token, server-side redirects through it for silent sign-in into `/workspace`. Webhook is the safety net if anything in this flow drops. |
+  | `/extension-handoff` | First-launch tab the extension opens. Pushes session tokens to the extension via `chrome.runtime.sendMessage(EXT_ID, …)`. If no webapp session: redirects to `/sign-in?next=/extension-handoff`. |
+  | `/api/stripe/webhook` | Stripe webhook handler. Idempotently creates/updates Supabase users on `checkout.session.completed`, syncs plan status on `customer.subscription.updated`/`.deleted`/`invoice.payment_failed`. |
+  | `/privacy`, `/terms` | Legal pages |
 - **Backend**: Supabase (Postgres + Auth + Storage + Edge Functions).
 - **AI**: Google Gemini 2.5 Pro (vision-capable).
 - **Payments**: Stripe (Checkout + Customer Portal + Webhooks).
@@ -707,12 +719,12 @@ These bite indie devs building Supabase + Stripe + Extension stacks. Commit to m
 
 After Supabase config is done. Build 1 and Build 2 are sliced for faster iteration — get the auth path working end-to-end before filling in the rest of the schema and webapp pages.
 
-1. **Build 1a — Auth foundation** (~2-4h): Supabase CLI setup, `profiles` table + RLS + auto-create-on-signup trigger, magic-link auth config. Minimum schema to support sign-in.
+1. **Build 1a — Auth foundation** (~2-4h): Supabase CLI setup, `profiles` table + RLS + auto-create-on-signup trigger, magic-link auth config. The trigger fires whether `auth.users` rows are inserted by the magic-link sign-in flow OR by the Stripe webhook (admin API) — both paths converge on the same `profiles` row.
 2. **Build 21** (keep-alive cron) — 30 min, do early so the dev project doesn't pause during gaps
-3. **Build 2a — Temporary webapp sign-in** (~2-3h): `/sign-in` page (magic link request) + `/auth/callback` route + `/dashboard` stub to verify session. Temporary scaffolding for testing auth before the extension auth UI lands.
-4. **Build 3** (extension auth UI) — unblocks paid-feature gating. Once landed, the temp `/sign-in` page from 2a is replaced by the extension's sign-in form (which calls `signInWithOtp` and uses the webapp `/auth/callback` for the redirect handoff).
+3. **Build 2a — Webapp sign-in for returning customers** (~2-3h, permanent): `/sign-in` page (magic-link form with `shouldCreateUser: false` + OTP fallback for cross-device users) + `/auth/callback` route + `/workspace` server-side auth gate. This is the permanent sign-in surface — not throwaway scaffolding. Returning customers (Pro users on any new device/browser) start here.
+4. **Build 3 — Extension session handoff** (no extension sign-in form): Extension manifest declares `externally_connectable: { matches: ["https://sellerlab.app/*"] }` with a stable `key`. On first launch with no stored session, extension calls `chrome.tabs.create({ url: 'https://sellerlab.app/extension-handoff' })`. The handoff page reads the webapp session (if any), `chrome.runtime.sendMessage(EXT_ID, { type: 'sl_session', tokens })`, and closes itself. Background script writes tokens to `chrome.storage.local` via a custom Supabase storage adapter, calls `supabase.auth.setSession(tokens)`. Extension never collects email or shows a sign-in form — all auth surfaces are webapp-rendered.
 5. **Build 1b — Rest of schema** (~6-8h): all other tables (`user_keywords`, `system_keywords`, `ai_calls`, `enriched_designs`, `sales_events`, `activity_events`, `buyers`) + RLS + storage bucket + custom `chrome.storage` adapter for the extension.
-6. **Build 2b — Real webapp pages** (~5-9h): landing/pricing, Stripe return, privacy + ToS pages.
+6. **Build 2b — Real webapp pages** (~5-9h): landing/pricing, `/extension-handoff` relay route (extension first-launch session push), privacy + ToS pages. (The Stripe `/welcome` return URL is part of Build 5 since it needs the Stripe + admin-API plumbing.)
 7. **Build 5** (Stripe) — can defer until you actually need to test paid flows.
 8. **Builds 4, 6, 7, 8** — order flexible; work on what's most fun.
 9. **Builds 9-14** (Spoonflower-touching) — leave for last, once auth + Stripe foundation is solid and you can be a "paid user" in your own dev environment.
@@ -724,10 +736,10 @@ After Supabase config is done. Build 1 and Build 2 are sliced for faster iterati
 | # | Build | Hours |
 |---|---|---|
 | 1 | Supabase project, schema + RLS, Auth (magic link), custom `chrome.storage` adapter. **Typically sliced**: 1a = auth foundation (`profiles` + RLS + trigger + auth config, ~2-4h), 1b = rest of schema + storage bucket + chrome.storage adapter (~6-8h) | 8-12h |
-| 2 | Tiny webapp on Vercel: landing/pricing, `/auth/callback` (handles magic-link redirect, exchanges code for session, hands off to extension), Stripe return, privacy + ToS pages. **Typically sliced**: 2a = temporary `/sign-in` + `/auth/callback` + `/dashboard` stub for testing pre-extension (~2-3h), 2b = real landing/pricing + Stripe return + privacy + ToS (~5-9h) | 8-12h |
-| 3 | Extension auth UI (magic link request, token receipt via `externally_connectable`, signed-in/out state) | 6-10h |
+| 2 | Webapp on Vercel: landing/pricing, `/sign-in` (returning customers, `shouldCreateUser: false`), `/auth/callback`, `/extension-handoff` (relay tab for extension session push), privacy + ToS pages. **Typically sliced**: 2a = `/sign-in` + `/auth/callback` + `/workspace` gate (~2-3h, permanent), 2b = landing/pricing + `/extension-handoff` + privacy + ToS (~5-9h) | 8-12h |
+| 3 | Extension session handoff (no extension sign-in form). `externally_connectable` declared on `https://sellerlab.app/*` with stable manifest `key`. Background script listens for `sl_session` messages, persists tokens to `chrome.storage.local`, calls `setSession`. First-launch flow opens `/extension-handoff` tab to claim any existing webapp session. | 4-6h |
 | 4 | Right-click "Save to keywords" (contextMenus, background script, direct backend save) | 3-5h |
-| 5 | Stripe single-tier setup, Checkout, webhook updating `profiles.plan` (per-subscription Price object so future tiering grandfathers cleanly) | 6-10h |
+| 5 | Stripe Flow C — **account creation happens after successful checkout, not before**. `/api/checkout` creates an anonymous Stripe Checkout Session, redirects to Stripe. Stripe collects email + payment. `success_url` → `/welcome?session_id=…` (server component): verifies session with Stripe secret key, creates Supabase user via `supabase.auth.admin.createUser({ email, email_confirm: true })` (idempotent — checks for existing email first), generates magic-link via `supabase.auth.admin.generateLink`, server-side redirects through it for silent sign-in into `/workspace`. `/api/stripe/webhook` is the safety net + ongoing sync: handles `checkout.session.completed` (idempotent user creation as backup), `customer.subscription.updated/.deleted`, `invoice.payment_failed`. Per-subscription Price object so future tiering grandfathers cleanly. | 6-10h |
 | 6 | Library UI in extension (CRUD on `user_keywords`, system_keywords browse, search/filter) | 6-10h |
 | 7 | Starter library curation (~100 keywords from Spoonflower taxonomy) + seeding logic | 3-7h |
 | 8 | AI image-match Edge Function + extension upload UI + results UI + bucket population | 20-30h |

@@ -7,8 +7,10 @@ out/
 build/
 dist/
 
-.env*.local
+# Ignore all env files by default; only commit the *.example templates.
 .env
+.env*
+!.env*.example
 
 *.log
 .DS_Store
