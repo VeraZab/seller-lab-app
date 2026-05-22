@@ -2,10 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 // Magic-link redirect target. Exchanges the ?code for a session, then bounces
-// the user to ?next (defaults to /workspace).
-//
-// When the extension auth UI lands (Build 3), this route also relays tokens
-// to the extension via chrome.runtime.sendMessage on the success page.
+// the user to ?next (defaults to /workspace). The extension handoff flow
+// chains through here as /sign-in → /auth/callback?next=/extension-handoff.
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
