@@ -158,12 +158,16 @@ async function callGemini(args: {
   libraryWords: string[];
   totalCap: number;
 }): Promise<GeminiOutput | null> {
-  const prompt = `You are tagging a design for a Spoonflower listing — a marketplace for fabric, wallpaper, and home goods. Your job: pick keywords from the user's library that visually or thematically apply to the attached design.
+  const prompt = `You are tagging a design for a Spoonflower listing — a marketplace for fabric, wallpaper, and home goods. Your job: pick keywords from the user's library that apply to the attached design.
 
 RULES:
-- Use words VERBATIM from the library. No rephrasing, splitting, or combining.
-- Only return library words that actually fit the design — quality over quantity.
-- If a library word is too generic ("and", "the", "fabric", "wallpaper", "design", "art", "home", etc.), skip it.
+- Return words VERBATIM from the library. No rephrasing, splitting, or combining.
+- Be inclusive. Visual, thematic, stylistic, palette, mood, and use-case matches are all valid. Tangential / adjacent matches are fine.
+- MULTI-TAG PLAUSIBLE READS. Stylized motifs can be read several ways at once. If a cluster bloom could be interpreted as peony, rose, dahlia, chrysanthemum, or camellia, and ANY of those are in the library, include ALL of the ones that are. Do not pick a single "best" identification and drop the others — every plausible read is a valid tag.
+- This multi-read rule applies broadly: stylized animals (could be cat/leopard/lion), abstract foliage (could be fern/palm/leaves), repeat layouts (could be stripe/trellis/climbing), color stories (could be neutral/earth tone/warm), etc. Include each plausible read present in the library.
+- For style / aesthetic tags (cottagecore, art nouveau, chinoiserie, mid-century, etc.): include if the design evokes the style, even loosely. Multiple style tags can coexist.
+- Only skip a library word if it's clearly wrong for this design — e.g. an automotive term on a floral, or a generic stopword like "and" / "the".
+- Aim for breadth. Return everything that reasonably fits.
 
 Library: ${JSON.stringify(args.libraryWords)}
 

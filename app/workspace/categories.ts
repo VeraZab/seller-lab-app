@@ -51,7 +51,7 @@ export const CATEGORIES: CategoryDef[] = [
   {
     name: "Spoonflower",
     chipClass: "chip--system",
-    description: "Scraped from Spoonflower",
+    description: "Saved from Spoonflower",
     swatch: "var(--slate-100)",
     swatchBorder: "var(--slate-300)",
     legendFill: "var(--slate-500)",
