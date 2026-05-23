@@ -1,9 +1,17 @@
 "use client";
 
-import Image from "next/image";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { BrandLockup } from "@/components/brand";
 import { Icon } from "@/components/icon";
+import {
+  CATEGORIES,
+  HEAT_SHADES,
+  UNCATEGORIZED,
+  categoryFor,
+  categoryRank,
+  heatLevel,
+} from "./categories";
 
 type SessionUser = {
   email: string;
@@ -12,197 +20,64 @@ type SessionUser = {
   plan: "free" | "paid";
 };
 
+export type SavedWord = {
+  word: string;
+  category: string | null;
+  frequency: number;
+};
+
+export type CharBucket = {
+  charCount: number;
+  words: SavedWord[];
+};
+
 type WorkspaceClientProps = {
   user: SessionUser;
+  buckets: CharBucket[];
+  heatMaxByCategory: Record<string, number>;
   signOut: () => Promise<void>;
+  removeKeyword: (word: string) => Promise<void>;
+  updateKeyword: (oldWord: string, newWord: string) => Promise<void>;
+  recategorizeKeyword: (
+    word: string,
+    category: string | null,
+  ) => Promise<void>;
+  addKeywords: (
+    entries: { word: string; category: string | null }[],
+  ) => Promise<void>;
 };
-
-// ---------------- Sample data (will be replaced by real backend in later builds) ----------------
-
-const SAMPLE_KEYWORDS = [
-  {
-    word: "cottagecore floral",
-    volume: 4200,
-    growth: "+18%",
-    comp: "low" as const,
-    score: 92,
-    picked: true,
-  },
-  {
-    word: "vintage botanical",
-    volume: 3100,
-    growth: "+12%",
-    comp: "medium" as const,
-    score: 88,
-    picked: true,
-  },
-  {
-    word: "moody floral repeat",
-    volume: 2400,
-    growth: "+34%",
-    comp: "low" as const,
-    score: 86,
-    picked: false,
-  },
-  {
-    word: "hand drawn botanical",
-    volume: 1900,
-    growth: "+9%",
-    comp: "medium" as const,
-    score: 81,
-    picked: true,
-  },
-  {
-    word: "muted floral pattern",
-    volume: 1700,
-    growth: "+6%",
-    comp: "low" as const,
-    score: 79,
-    picked: false,
-  },
-  {
-    word: "wildflower fabric",
-    volume: 1500,
-    growth: "+22%",
-    comp: "medium" as const,
-    score: 77,
-    picked: false,
-  },
-  {
-    word: "pressed flowers",
-    volume: 1300,
-    growth: "−4%",
-    comp: "high" as const,
-    score: 64,
-    picked: false,
-  },
-  {
-    word: "english garden",
-    volume: 1100,
-    growth: "+3%",
-    comp: "medium" as const,
-    score: 71,
-    picked: false,
-  },
-  {
-    word: "earth tone floral",
-    volume: 980,
-    growth: "+11%",
-    comp: "low" as const,
-    score: 76,
-    picked: true,
-  },
-  {
-    word: "small scale botanical",
-    volume: 820,
-    growth: "+15%",
-    comp: "low" as const,
-    score: 74,
-    picked: false,
-  },
-  {
-    word: "forest greenery",
-    volume: 760,
-    growth: "+7%",
-    comp: "medium" as const,
-    score: 69,
-    picked: false,
-  },
-  {
-    word: "romantic floral",
-    volume: 690,
-    growth: "−1%",
-    comp: "high" as const,
-    score: 58,
-    picked: false,
-  },
-];
-
-type Bucket = {
-  name: string;
-  count: number;
-  color: string;
-  tags: string[];
-  chipClass?: string;
-};
-
-const SAMPLE_BUCKETS: Bucket[] = [
-  {
-    name: "Floral / cottagecore",
-    count: 14,
-    color: "var(--saffron-500)",
-    tags: ["cottagecore floral", "vintage botanical", "romantic floral"],
-  },
-  {
-    name: "Forest / moody",
-    count: 9,
-    color: "var(--sage-500)",
-    tags: [
-      "moody floral repeat",
-      "forest greenery",
-      "earth tone floral",
-    ],
-  },
-  {
-    name: "Hand-drawn",
-    count: 7,
-    color: "var(--slate-500)",
-    tags: ["hand drawn botanical", "pressed flowers"],
-  },
-  {
-    name: "Small scale",
-    count: 5,
-    color: "var(--indigo-500)",
-    tags: ["small scale botanical", "wildflower fabric"],
-  },
-  {
-    name: "Starred",
-    count: 6,
-    color: "var(--saffron-500)",
-    tags: ["pressed flowers", "linen weight", "heirloom"],
-    chipClass: "chip--starred",
-  },
-];
-
-type Keyword = (typeof SAMPLE_KEYWORDS)[number];
 
 // ---------------- Page ----------------
 
 export default function WorkspaceClient({
   user,
+  buckets,
+  heatMaxByCategory,
   signOut,
+  removeKeyword,
+  updateKeyword,
+  recategorizeKeyword,
+  addKeywords,
 }: WorkspaceClientProps) {
-  const [active, setActive] = useState("research");
-  const [url, setUrl] = useState("");
-  const [hasData, setHasData] = useState(false);
-  const [rows, setRows] = useState<Keyword[]>(SAMPLE_KEYWORDS);
+  const router = useRouter();
 
-  const handleResearch = () => setHasData(true);
-  const handleSample = () => {
-    setUrl("https://www.spoonflower.com/en/fabric/14829034");
-    setHasData(true);
-  };
-  const toggle = (i: number) =>
-    setRows((rs) =>
-      rs.map((r, idx) => (idx === i ? { ...r, picked: !r.picked } : r)),
-    );
+  useEffect(() => {
+    const id = setInterval(() => router.refresh(), 30_000);
+    return () => clearInterval(id);
+  }, [router]);
 
   return (
     <div
       style={{
         display: "flex",
-        minHeight: "100vh",
+        height: "100vh",
+        overflow: "hidden",
         background: "var(--bg)",
         fontFamily: "var(--font-body)",
         color: "var(--ink-900)",
       }}
     >
-      <Sidebar
-        active={active}
-        onNav={setActive}
-        user={user}
-        signOut={signOut}
-      />
+      <Sidebar user={user} signOut={signOut} />
       <div
         style={{
           flex: 1,
@@ -211,70 +86,14 @@ export default function WorkspaceClient({
           minWidth: 0,
         }}
       >
-        <Topbar
-          url={url}
-          onUrlChange={setUrl}
-          onResearch={handleResearch}
+        <KeywordLibrary
+          buckets={buckets}
+          heatMaxByCategory={heatMaxByCategory}
+          removeKeyword={removeKeyword}
+          updateKeyword={updateKeyword}
+          recategorizeKeyword={recategorizeKeyword}
+          addKeywords={addKeywords}
         />
-        {!hasData ? (
-          <Empty onPasteSample={handleSample} />
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              display: "grid",
-              gridTemplateColumns: "1fr 320px",
-              gap: 22,
-              padding: "20px 22px 32px",
-              minHeight: 0,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 16,
-                minWidth: 0,
-              }}
-            >
-              <ListingSummary />
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div>
-                  <div className="eyebrow">Keyword candidates</div>
-                  <div
-                    style={{
-                      fontFamily: "var(--font-display)",
-                      fontSize: 22,
-                      fontWeight: 500,
-                      color: "var(--ink-900)",
-                      letterSpacing: "-0.015em",
-                      marginTop: 4,
-                    }}
-                  >
-                    {rows.length} ideas, ranked by score
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn--ghost btn--sm">
-                    <Icon name="sort" size={12} /> Score
-                  </button>
-                  <button className="btn btn--ghost btn--sm">
-                    <Icon name="search" size={12} /> Filter
-                  </button>
-                </div>
-              </div>
-              <KeywordTable rows={rows} onToggle={toggle} />
-              <TagComposer />
-            </div>
-            <BucketsRail />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -283,30 +102,14 @@ export default function WorkspaceClient({
 // ---------------- Sidebar ----------------
 
 type SidebarProps = {
-  active: string;
-  onNav: (id: string) => void;
   user: SessionUser;
   signOut: () => Promise<void>;
 };
 
-function Sidebar({ active, onNav, user, signOut }: SidebarProps) {
+function Sidebar({ user, signOut }: SidebarProps) {
   const [isSigningOut, startSignOut] = useTransition();
   const items = [
-    { id: "research", label: "Research", icon: "flask" as const },
-    {
-      id: "buckets",
-      label: "Buckets",
-      icon: "folder" as const,
-      count: 7,
-    },
-    {
-      id: "listings",
-      label: "Listings",
-      icon: "list" as const,
-      count: 32,
-    },
-    { id: "history", label: "History", icon: "history" as const },
-    { id: "settings", label: "Settings", icon: "settings" as const },
+    { id: "keyword-library", label: "Keyword Library", icon: "star" as const },
   ];
   return (
     <aside
@@ -315,7 +118,7 @@ function Sidebar({ active, onNav, user, signOut }: SidebarProps) {
         flexShrink: 0,
         background: "var(--parchment-100)",
         borderRight: "1px solid var(--border)",
-        padding: "18px 14px",
+        padding: "18px 14px 0",
         display: "flex",
         flexDirection: "column",
         gap: 22,
@@ -339,52 +142,29 @@ function Sidebar({ active, onNav, user, signOut }: SidebarProps) {
         >
           Workspace
         </div>
-        {items.map((it) => {
-          const isActive = active === it.id;
-          return (
-            <button
-              key={it.id}
-              onClick={() => onNav(it.id)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                fontFamily: "var(--font-body)",
-                fontSize: 13.5,
-                fontWeight: isActive ? 600 : 500,
-                color: isActive ? "var(--ink-900)" : "var(--ink-700)",
-                background: isActive ? "#fff" : "transparent",
-                border: "1px solid",
-                borderColor: isActive ? "var(--border)" : "transparent",
-                borderRadius: 8,
-                cursor: "pointer",
-                width: "100%",
-                boxShadow: isActive ? "var(--shadow-xs)" : "none",
-                transition:
-                  "background 160ms ease-out, color 160ms ease-out",
-              }}
-            >
-              <Icon name={it.icon} size={15} />
-              <span style={{ flex: 1, textAlign: "left" }}>{it.label}</span>
-              {it.count != null && (
-                <span
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 11,
-                    color: "var(--ink-500)",
-                    background: "var(--parchment-50)",
-                    padding: "1px 7px",
-                    borderRadius: 999,
-                    border: "1px solid var(--border)",
-                  }}
-                >
-                  {it.count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+        {items.map((it) => (
+          <div
+            key={it.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 10px",
+              fontFamily: "var(--font-body)",
+              fontSize: 13.5,
+              fontWeight: 600,
+              color: "var(--ink-900)",
+              background: "#fff",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              width: "100%",
+              boxShadow: "var(--shadow-xs)",
+            }}
+          >
+            <Icon name={it.icon} size={15} />
+            <span style={{ flex: 1, textAlign: "left" }}>{it.label}</span>
+          </div>
+        ))}
       </nav>
 
       <div
@@ -397,58 +177,10 @@ function Sidebar({ active, onNav, user, signOut }: SidebarProps) {
       >
         <div
           style={{
-            background: "#fff",
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            padding: 12,
-            boxShadow: "var(--shadow-xs)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 12.5,
-              fontWeight: 700,
-              color: "var(--ink-900)",
-            }}
-          >
-            Free trial
-          </div>
-          <div
-            style={{ fontSize: 11.5, color: "var(--ink-500)", marginTop: 2 }}
-          >
-            11 of 14 days left
-          </div>
-          <div
-            style={{
-              height: 4,
-              background: "var(--parchment-200)",
-              borderRadius: 999,
-              marginTop: 10,
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                background: "var(--saffron-500)",
-                borderRadius: 999,
-                width: "78%",
-              }}
-            />
-          </div>
-          <button
-            className="btn btn--sm btn--accent"
-            style={{ marginTop: 10, width: "100%" }}
-          >
-            Manage plan
-          </button>
-        </div>
-        <div
-          style={{
             display: "flex",
             alignItems: "center",
             gap: 10,
-            padding: "8px 8px",
+            padding: "14px 8px",
             borderTop: "1px solid var(--border)",
           }}
         >
@@ -539,689 +271,918 @@ function Sidebar({ active, onNav, user, signOut }: SidebarProps) {
   );
 }
 
-// ---------------- Topbar ----------------
+// ---------------- Keyword Library ----------------
 
-type TopbarProps = {
-  url: string;
-  onUrlChange: (v: string) => void;
-  onResearch: () => void;
+type KeywordLibraryProps = {
+  buckets: CharBucket[];
+  heatMaxByCategory: Record<string, number>;
+  removeKeyword: (word: string) => Promise<void>;
+  updateKeyword: (oldWord: string, newWord: string) => Promise<void>;
+  recategorizeKeyword: (
+    word: string,
+    category: string | null,
+  ) => Promise<void>;
+  addKeywords: (
+    entries: { word: string; category: string | null }[],
+  ) => Promise<void>;
 };
 
-function Topbar({ url, onUrlChange, onResearch }: TopbarProps) {
-  return (
-    <header
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 16,
-        padding: "12px 22px",
-        background: "var(--bg)",
-        borderBottom: "1px solid var(--border)",
-        position: "sticky",
-        top: 0,
-        zIndex: 5,
-        backdropFilter: "blur(8px)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          minWidth: 220,
-          whiteSpace: "nowrap",
-        }}
-      >
-        <span className="eyebrow" style={{ color: "var(--ink-500)" }}>
-          Research
-        </span>
-        <Icon name="arrow" size={13} color="var(--ink-300)" />
-        <span
-          style={{
-            fontFamily: "var(--font-display)",
-            fontSize: 17,
-            color: "var(--ink-900)",
-            fontWeight: 500,
-          }}
-        >
-          New keyword set
-        </span>
-      </div>
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          gap: 10,
-          minWidth: 0,
-        }}
-      >
-        <div className="field-icon-wrap" style={{ flex: 1 }}>
-          <span
-            style={{
-              position: "absolute",
-              left: 11,
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: "var(--ink-500)",
-              display: "inline-flex",
-            }}
-          >
-            <Icon name="link" size={14} />
-          </span>
-          <input
-            className="input input--with-icon"
-            placeholder="Paste a Spoonflower listing URL, or describe your design"
-            value={url}
-            onChange={(e) => onUrlChange(e.target.value)}
-          />
-        </div>
-        <button className="btn btn--accent" onClick={onResearch}>
-          <Icon name="sparkle" size={14} /> Research
-        </button>
-      </div>
-      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-        <button className="btn btn--ghost btn--sm">
-          <Icon name="copy" size={13} /> Copy tags
-        </button>
-        <button className="btn btn--sm">Save listing</button>
-      </div>
-    </header>
-  );
-}
+function KeywordLibrary({
+  buckets,
+  heatMaxByCategory,
+  removeKeyword,
+  updateKeyword,
+  recategorizeKeyword,
+  addKeywords,
+}: KeywordLibraryProps) {
+  const totalWords = buckets.reduce((sum, b) => sum + b.words.length, 0);
 
-// ---------------- Empty state ----------------
-
-function Empty({ onPasteSample }: { onPasteSample: () => void }) {
   return (
     <div
       style={{
         flex: 1,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        position: "relative",
-        overflow: "hidden",
+        padding: "var(--space-8) var(--space-8) var(--space-10)",
+        minWidth: 0,
+        overflowY: "auto",
       }}
     >
       <div
         style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: "url(/assets/shimmer.svg)",
-          backgroundSize: "360px 360px",
-          backgroundRepeat: "repeat",
-          pointerEvents: "none",
-          opacity: 0.5,
-        }}
-      />
-      <div
-        style={{
-          position: "relative",
+          maxWidth: 1120,
+          margin: "0 auto",
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
-          padding: "60px 24px",
+          gap: "var(--space-5)",
         }}
       >
-        <Image
-          src="/assets/logo.svg"
-          alt=""
-          width={36}
-          height={36}
-          style={{ width: 36, height: 36 }}
+        <Header
+          totalWords={totalWords}
+          bucketCount={buckets.length}
         />
-        <div className="eyebrow" style={{ marginTop: 14 }}>
-          Start a keyword set
-        </div>
-        <h2
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: 500,
-            fontSize: 36,
-            color: "var(--ink-900)",
-            lineHeight: 1.05,
-            letterSpacing: "-0.02em",
-            margin: "6px 0 12px",
-            maxWidth: 520,
-            textAlign: "center",
-          }}
-        >
-          Paste a listing URL,{" "}
-          <em style={{ fontStyle: "italic" }}>
-            or just stare at this for a bit.
-          </em>
-        </h2>
-        <p
-          style={{
-            color: "var(--ink-500)",
-            fontSize: 14.5,
-            maxWidth: 440,
-            textAlign: "center",
-            margin: 0,
-          }}
-        >
-          We&rsquo;ll pull the title and existing tags, surface stronger
-          keyword candidates, and let you bucket them by theme and character
-          count.
-        </p>
-        <button
-          className="btn btn--accent btn--lg"
-          style={{ marginTop: 22 }}
-          onClick={onPasteSample}
-        >
-          <Icon name="sparkle" size={15} /> Try a sample listing
-        </button>
-        <div
-          style={{
-            marginTop: 14,
-            fontSize: 12.5,
-            color: "var(--ink-500)",
-          }}
-        >
-          Or paste a URL in the bar above ↑
-        </div>
+        <AddKeywordsBar addKeywords={addKeywords} />
+        <Legend />
+        {buckets.length === 0 ? (
+          <EmptyLibrary />
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+              gap: "var(--space-4)",
+            }}
+          >
+            {buckets.map((b) => (
+              <CharBucketCard
+                key={b.charCount}
+                bucket={b}
+                heatMaxByCategory={heatMaxByCategory}
+                removeKeyword={removeKeyword}
+                updateKeyword={updateKeyword}
+                recategorizeKeyword={recategorizeKeyword}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ---------------- Listing summary ----------------
+function Header({
+  totalWords,
+  bucketCount,
+}: {
+  totalWords: number;
+  bucketCount: number;
+}) {
+  return (
+    <div>
+      <div className="eyebrow" style={{ color: "var(--ink-500)" }}>
+        Keyword Library
+      </div>
+      <h1
+        style={{
+          fontFamily: "var(--font-display)",
+          fontSize: 30,
+          fontWeight: 500,
+          color: "var(--ink-900)",
+          letterSpacing: "-0.018em",
+          margin: "var(--space-1) 0 0",
+          lineHeight: 1.1,
+        }}
+      >
+        {totalWords} {totalWords === 1 ? "word" : "words"}{" "}
+        <span style={{ color: "var(--ink-300)" }}>·</span>{" "}
+        <span style={{ color: "var(--ink-500)", fontWeight: 400 }}>
+          {bucketCount} {bucketCount === 1 ? "bucket" : "buckets"} by character
+          count
+        </span>
+      </h1>
+    </div>
+  );
+}
 
-function ListingSummary() {
+function CharBucketCard({
+  bucket,
+  heatMaxByCategory,
+  removeKeyword,
+  updateKeyword,
+  recategorizeKeyword,
+}: {
+  bucket: CharBucket;
+  heatMaxByCategory: Record<string, number>;
+  removeKeyword: (word: string) => Promise<void>;
+  updateKeyword: (oldWord: string, newWord: string) => Promise<void>;
+  recategorizeKeyword: (
+    word: string,
+    category: string | null,
+  ) => Promise<void>;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [busyWord, setBusyWord] = useState<string | null>(null);
+
+  const handleRemove = (word: string) => {
+    setBusyWord(word);
+    startTransition(async () => {
+      await removeKeyword(word);
+      setBusyWord(null);
+    });
+  };
+
+  const handleUpdate = (oldWord: string, newWord: string) => {
+    setBusyWord(oldWord);
+    startTransition(async () => {
+      await updateKeyword(oldWord, newWord);
+      setBusyWord(null);
+    });
+  };
+
+  const handleRecategorize = (word: string, category: string | null) => {
+    setBusyWord(word);
+    startTransition(async () => {
+      await recategorizeKeyword(word, category);
+      setBusyWord(null);
+    });
+  };
+
+  return (
+    <section
+      className="s-card"
+      style={{
+        padding: "var(--space-4) var(--space-5) var(--space-5)",
+      }}
+    >
+      <header
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "var(--space-3)",
+          marginBottom: "var(--space-3)",
+          paddingBottom: "var(--space-3)",
+          borderBottom: "1px solid var(--parchment-200)",
+        }}
+      >
+        <h2
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 22,
+            fontWeight: 500,
+            color: "var(--ink-900)",
+            letterSpacing: "-0.015em",
+            margin: 0,
+            display: "inline-flex",
+            alignItems: "baseline",
+            gap: 6,
+          }}
+        >
+          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>
+            {bucket.charCount}
+          </span>
+          <span
+            style={{
+              fontFamily: "var(--font-body)",
+              fontSize: 12,
+              fontWeight: 500,
+              color: "var(--ink-500)",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+            }}
+          >
+            {bucket.charCount === 1 ? "char" : "chars"}
+          </span>
+        </h2>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11.5,
+            color: "var(--ink-500)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {bucket.words.length}{" "}
+          {bucket.words.length === 1 ? "word" : "words"}
+        </span>
+      </header>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "var(--space-2)",
+        }}
+      >
+        {sortBucketWords(bucket.words).map((w) => (
+          <WordPill
+            key={w.word}
+            word={w.word}
+            category={w.category}
+            frequency={w.frequency}
+            heatMax={
+              w.category ? (heatMaxByCategory[w.category] ?? 1) : 1
+            }
+            onRemove={() => handleRemove(w.word)}
+            onUpdate={(next) => handleUpdate(w.word, next)}
+            onRecategorize={(cat) => handleRecategorize(w.word, cat)}
+            disabled={pending && busyWord === w.word}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WordPill({
+  word,
+  category,
+  frequency,
+  heatMax,
+  onRemove,
+  onUpdate,
+  onRecategorize,
+  disabled,
+}: {
+  word: string;
+  category: string | null;
+  frequency: number;
+  heatMax: number;
+  onRemove: () => void;
+  onUpdate: (next: string) => void;
+  onRecategorize: (category: string | null) => void;
+  disabled: boolean;
+}) {
+  const c = categoryFor(category);
+  const heatShade =
+    c.heat && (c.name === "Sold" || c.name === "Liked")
+      ? HEAT_SHADES[c.name][heatLevel(frequency, heatMax)]
+      : null;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(word);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const commit = () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (next && next !== word) onUpdate(next);
+    else setDraft(word);
+  };
+
+  const cancel = () => {
+    setDraft(word);
+    setEditing(false);
+  };
+
+  return (
+    <span
+      className={`chip ${heatShade ? "" : c.chipClass}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "3px 5px 3px 4px",
+        fontSize: 12,
+        fontFamily: "var(--font-mono)",
+        borderRadius: 999,
+        boxShadow: "none",
+        opacity: disabled ? 0.5 : 1,
+        transition: "opacity 160ms ease-out",
+        position: "relative",
+        ...(heatShade
+          ? {
+              background: heatShade.bg,
+              borderColor: heatShade.border,
+              color: heatShade.color,
+            }
+          : null),
+      }}
+    >
+      <CategoryDot
+        category={category}
+        frequency={frequency}
+        heatMax={heatMax}
+        disabled={disabled || editing}
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onPick={(cat) => {
+          setPickerOpen(false);
+          onRecategorize(cat);
+        }}
+      />
+      {editing ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              (e.target as HTMLInputElement).blur();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              cancel();
+            }
+          }}
+          size={Math.max(draft.length, 4)}
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            color: "inherit",
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            padding: "0 2px",
+            margin: 0,
+            minWidth: 24,
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => !disabled && setEditing(true)}
+          disabled={disabled}
+          title="Click to edit"
+          style={{
+            background: "transparent",
+            border: "none",
+            padding: "0 2px",
+            margin: 0,
+            font: "inherit",
+            color: "inherit",
+            cursor: disabled ? "default" : "text",
+          }}
+        >
+          {word}
+        </button>
+      )}
+      <PillIconButton
+        ariaLabel={`Remove ${word}`}
+        onClick={onRemove}
+        disabled={disabled || editing}
+      >
+        <Icon name="x" size={10} />
+      </PillIconButton>
+    </span>
+  );
+}
+
+function PillIconButton({
+  children,
+  onClick,
+  disabled,
+  ariaLabel,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled: boolean;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 16,
+        height: 16,
+        padding: 0,
+        border: "none",
+        background: "transparent",
+        borderRadius: 999,
+        cursor: disabled ? "default" : "pointer",
+        color: "currentColor",
+        opacity: 0.5,
+        transition: "opacity 120ms ease-out, background 120ms ease-out",
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.opacity = "1";
+        e.currentTarget.style.background = "rgba(20,24,42,0.08)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.opacity = "0.5";
+        e.currentTarget.style.background = "transparent";
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function CategoryDot({
+  category,
+  frequency,
+  heatMax,
+  disabled,
+  open,
+  onOpenChange,
+  onPick,
+}: {
+  category: string | null;
+  frequency: number;
+  heatMax: number;
+  disabled: boolean;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onPick: (category: string | null) => void;
+}) {
+  const c = categoryFor(category);
+  const heatShade =
+    c.heat && (c.name === "Sold" || c.name === "Liked")
+      ? HEAT_SHADES[c.name][heatLevel(frequency, heatMax)]
+      : null;
+  const dotBg = heatShade?.bg ?? c.swatch;
+  const dotBorder = heatShade?.border ?? c.swatchBorder;
+  const rootRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) onOpenChange(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onOpenChange]);
+
+  return (
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onOpenChange(!open)}
+        aria-label={`Change category (currently ${c.name})`}
+        title={`${c.name} — click to recategorize`}
+        style={{
+          width: 16,
+          height: 16,
+          padding: 0,
+          border: `1.5px solid ${dotBorder}`,
+          background: dotBg,
+          borderRadius: 999,
+          cursor: disabled ? "default" : "pointer",
+          boxShadow: open ? "0 0 0 2px rgba(20,24,42,0.12)" : "none",
+          transition: "box-shadow 120ms ease-out, transform 120ms ease-out",
+        }}
+        onMouseEnter={(e) => {
+          if (disabled) return;
+          e.currentTarget.style.transform = "scale(1.12)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = "scale(1)";
+        }}
+      />
+      {open && (
+        <CategoryMenu
+          current={c.name}
+          onPick={onPick}
+        />
+      )}
+    </span>
+  );
+}
+
+function CategoryMenu({
+  current,
+  onPick,
+}: {
+  current: string;
+  onPick: (category: string | null) => void;
+}) {
+  const options = [...CATEGORIES, UNCATEGORIZED];
+  return (
+    <div
+      role="menu"
+      style={{
+        position: "absolute",
+        top: "calc(100% + 6px)",
+        left: -4,
+        zIndex: 20,
+        minWidth: 180,
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-md)",
+        boxShadow: "var(--shadow-md)",
+        padding: "var(--space-1)",
+        fontFamily: "var(--font-body)",
+      }}
+    >
+      {options.map((opt) => {
+        const isCurrent = opt.name === current;
+        const value = opt === UNCATEGORIZED ? null : opt.name;
+        return (
+          <button
+            key={opt.name}
+            role="menuitem"
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onPick(value);
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "6px 8px",
+              fontSize: 12.5,
+              color: "var(--ink-900)",
+              background: isCurrent ? "var(--parchment-100)" : "transparent",
+              border: "none",
+              borderRadius: "var(--radius-sm)",
+              cursor: "pointer",
+              textAlign: "left",
+              fontWeight: isCurrent ? 600 : 500,
+              transition: "background 100ms ease-out",
+            }}
+            onMouseEnter={(e) => {
+              if (!isCurrent)
+                e.currentTarget.style.background = "var(--parchment-50)";
+            }}
+            onMouseLeave={(e) => {
+              if (!isCurrent)
+                e.currentTarget.style.background = "transparent";
+            }}
+          >
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 3,
+                background: opt.swatch,
+                border: `1.5px solid ${opt.swatchBorder}`,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ flex: 1 }}>{opt.name}</span>
+            {isCurrent && (
+              <Icon name="check" size={12} color="var(--ink-500)" />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AddKeywordsBar({
+  addKeywords,
+}: {
+  addKeywords: (
+    entries: { word: string; category: string | null }[],
+  ) => Promise<void>;
+}) {
+  const [value, setValue] = useState("");
+  const [category, setCategory] = useState<string>("Spoonflower");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const submit = () => {
+    const words = splitWords(value);
+    if (!words.length) return;
+    const cat = category || null;
+    startTransition(async () => {
+      await addKeywords(words.map((w) => ({ word: w, category: cat })));
+      setValue("");
+      setError(null);
+    });
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData("text");
+    if (text.includes("\n") || text.includes("\t")) {
+      e.preventDefault();
+      const normalized = text.replace(/[\t\n\r]+/g, ", ");
+      setValue((v) => (v ? `${v}, ${normalized}` : normalized));
+    }
+  };
+
+  const handleFile = (file: File) => {
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      const entries = parseCsv(text);
+      if (!entries.length) {
+        setError("No keywords found in file.");
+        return;
+      }
+      startTransition(async () => {
+        await addKeywords(entries);
+      });
+    };
+    reader.onerror = () => setError("Couldn't read that file.");
+    reader.readAsText(file);
+  };
+
   return (
     <div
       className="s-card"
       style={{
+        padding: "var(--space-3) var(--space-4)",
         display: "flex",
-        gap: 18,
-        alignItems: "center",
-        padding: 14,
+        flexDirection: "column",
+        gap: "var(--space-2)",
       }}
     >
       <div
         style={{
-          width: 56,
-          height: 56,
-          flexShrink: 0,
-          background: "var(--parchment-200)",
-          backgroundImage:
-            "radial-gradient(circle at 30% 30%, var(--sage-500), transparent 30%), radial-gradient(circle at 70% 60%, var(--saffron-500), transparent 30%), radial-gradient(circle at 50% 80%, var(--slate-500), transparent 35%)",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-        }}
-      />
-      <div
-        style={{
-          flex: 1,
           display: "flex",
-          flexDirection: "column",
-          gap: 4,
+          gap: "var(--space-2)",
+          alignItems: "center",
+          flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className="badge badge--info">Listing</span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--ink-500)",
-            }}
-          >
-            spoonflower.com/designs/14829034
-          </span>
-        </div>
-        <div
-          style={{
-            fontFamily: "var(--font-display)",
-            fontSize: 19,
-            fontWeight: 500,
-            color: "var(--ink-900)",
-            letterSpacing: "-0.01em",
+        <input
+          className="input"
+          placeholder="Type or paste keyword (use hyphen to keep multi word together)"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onPaste={handlePaste}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submit();
+            }
           }}
+          disabled={pending}
+          style={{ flex: "1 1 280px", minWidth: 220 }}
+        />
+        <select
+          className="select"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          disabled={pending}
+          style={{ width: "auto", minWidth: 160, flexShrink: 0 }}
         >
-          Hand-illustrated cottagecore botanical repeat
-        </div>
-        <div
+          {CATEGORIES.filter((c) => c.userSelectable).map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.name}
+            </option>
+          ))}
+          <option value="">Uncategorized</option>
+        </select>
+        <button
+          type="button"
+          className="btn btn--accent"
+          onClick={submit}
+          disabled={pending || !value.trim()}
+        >
+          <Icon name="plus" size={13} /> Add
+        </button>
+        <span
+          aria-hidden
           style={{
-            display: "flex",
-            gap: 14,
-            fontSize: 12.5,
-            color: "var(--ink-500)",
+            width: 1,
+            alignSelf: "stretch",
+            background: "var(--parchment-200)",
+            margin: "0 var(--space-1)",
           }}
+        />
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={() => fileRef.current?.click()}
+          disabled={pending}
+          title="CSV columns: word, category (category optional)"
         >
-          <span>5 current tags · 28 chars used</span>
-          <span>·</span>
-          <span>Last edited 3 days ago</span>
-        </div>
+          <Icon name="file" size={13} /> Import CSV
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv,text/plain"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleFile(f);
+            e.target.value = "";
+          }}
+        />
       </div>
-      <button className="btn btn--ghost btn--sm">
-        <Icon name="file" size={13} /> Open on Spoonflower
-      </button>
+      {error && <div className="help help--error">{error}</div>}
     </div>
   );
 }
 
-// ---------------- Keyword table ----------------
+function sortBucketWords(words: SavedWord[]): SavedWord[] {
+  return [...words].sort((a, b) => {
+    const ra = categoryRank(a.category);
+    const rb = categoryRank(b.category);
+    if (ra !== rb) return ra - rb;
+    if (b.frequency !== a.frequency) return b.frequency - a.frequency;
+    return a.word.localeCompare(b.word);
+  });
+}
 
-type KeywordTableProps = {
-  rows: Keyword[];
-  onToggle: (i: number) => void;
-};
+function splitWords(input: string): string[] {
+  return input
+    .split(/[,\n\r\t]+/g)
+    .map((w) => w.trim())
+    .filter(Boolean);
+}
 
-function KeywordTable({ rows, onToggle }: KeywordTableProps) {
-  const gridTemplate =
-    "40px 1fr 70px 90px 70px 110px 70px 90px";
+function parseCsv(
+  text: string,
+): { word: string; category: string | null }[] {
+  const out: { word: string; category: string | null }[] = [];
+  const lines = text.split(/\r?\n/);
+  let headerSkipped = false;
+  for (const raw of lines) {
+    if (!raw.trim()) continue;
+    const cells = splitCsvLine(raw);
+    if (!cells[0]) continue;
+    if (
+      !headerSkipped &&
+      out.length === 0 &&
+      /^(word|keyword|tag|name)$/i.test(cells[0])
+    ) {
+      headerSkipped = true;
+      continue;
+    }
+    out.push({
+      word: cells[0],
+      category: cells[1]?.trim() ? cells[1].trim() : null,
+    });
+  }
+  return out;
+}
+
+function splitCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      cells.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+function HeatLegendSwatch({ base }: { base: "Sold" | "Liked" }) {
+  const shades = HEAT_SHADES[base];
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: "inline-flex",
+        borderRadius: 999,
+        overflow: "hidden",
+        border: `1.5px solid ${shades[3].border}`,
+        height: 14,
+        boxShadow: "var(--shadow-xs)",
+      }}
+    >
+      <span style={{ width: 10, background: shades[1].bg }} />
+      <span style={{ width: 10, background: shades[2].bg }} />
+      <span style={{ width: 10, background: shades[3].bg }} />
+    </span>
+  );
+}
+
+function Legend() {
   return (
     <div
       style={{
-        background: "#fff",
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        overflow: "hidden",
-        boxShadow: "var(--shadow-sm)",
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "var(--space-4)",
+        fontSize: 12,
+        color: "var(--ink-500)",
       }}
     >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: gridTemplate,
-          padding: "10px 14px",
-          background: "var(--parchment-50)",
-          borderBottom: "1px solid var(--border)",
-          fontFamily: "var(--font-body)",
-          fontSize: 11.5,
-          fontWeight: 700,
-          letterSpacing: "0.06em",
-          textTransform: "uppercase",
-          color: "var(--ink-500)",
-          alignItems: "center",
-        }}
+      <span
+        className="eyebrow"
+        style={{ color: "var(--ink-500)" }}
       >
-        <div />
-        <div>Keyword</div>
-        <div>Chars</div>
-        <div>Volume</div>
-        <div>30d</div>
-        <div>Competition</div>
-        <div>Score</div>
-        <div />
-      </div>
-      {rows.map((r, i) => (
-        <div
-          key={r.word}
+        Categories
+      </span>
+      {[...CATEGORIES, UNCATEGORIZED].map((c) => (
+        <span
+          key={c.name}
+          title={c.description}
           style={{
-            display: "grid",
-            gridTemplateColumns: gridTemplate,
-            padding: "10px 14px",
-            borderBottom: "1px solid var(--border)",
+            display: "inline-flex",
             alignItems: "center",
-            fontSize: 13,
+            gap: 6,
             color: "var(--ink-700)",
-            background: r.picked ? "var(--saffron-50)" : undefined,
+            fontSize: 12.5,
           }}
         >
-          <button
-            onClick={() => onToggle(i)}
-            style={{
-              width: 18,
-              height: 18,
-              border: "1.5px solid var(--slate-300)",
-              borderRadius: 5,
-              background: r.picked ? "var(--slate-700)" : "#fff",
-              borderColor: r.picked ? "var(--slate-700)" : "var(--slate-300)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 0,
-            }}
-          >
-            {r.picked && <Icon name="check" size={11} color="#fff" />}
-          </button>
-          <div
-            style={{
-              color: "var(--ink-900)",
-              fontFamily: "var(--font-mono)",
-              fontSize: 13,
-            }}
-          >
-            {r.word}
-          </div>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 12.5,
-              color:
-                r.word.length > 35
-                  ? "var(--brick-500)"
-                  : "var(--ink-700)",
-            }}
-          >
-            {r.word.length}
-          </div>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 12.5,
-              fontVariantNumeric: "tabular-nums",
-              color: "var(--ink-700)",
-            }}
-          >
-            {r.volume.toLocaleString()}
-          </div>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 12.5,
-              color: r.growth.startsWith("+")
-                ? "var(--sage-700)"
-                : "var(--brick-700)",
-              fontWeight: 600,
-            }}
-          >
-            {r.growth}
-          </div>
-          <div>
-            <CompPip level={r.comp} />
-          </div>
-          <div>
-            <ScoreDot value={r.score} />
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <button
-              className="btn btn--ghost btn--sm"
-              style={{ padding: "4px 8px" }}
-            >
-              <Icon name="folder" size={12} /> Bucket
-            </button>
-          </div>
-        </div>
+          {c.heat ? (
+            <HeatLegendSwatch base={c.name as "Sold" | "Liked"} />
+          ) : (
+            <span
+              style={{
+                width: 14,
+                height: 14,
+                borderRadius: 999,
+                background: c.legendFill,
+                border: `1.5px solid ${c.legendBorder}`,
+                boxShadow: "var(--shadow-xs)",
+              }}
+            />
+          )}
+          {c.name}
+        </span>
       ))}
     </div>
   );
 }
 
-function CompPip({ level }: { level: "low" | "medium" | "high" }) {
-  const map = {
-    low: { color: "var(--sage-500)", label: "Low" },
-    medium: { color: "var(--saffron-500)", label: "Medium" },
-    high: { color: "var(--brick-500)", label: "High" },
-  } as const;
-  const m = map[level];
+function EmptyLibrary() {
   return (
-    <span
+    <div
+      className="s-card s-card--tinted"
       style={{
-        display: "inline-flex",
+        display: "flex",
         alignItems: "center",
-        gap: 6,
-        fontSize: 12.5,
-        color: "var(--ink-700)",
+        justifyContent: "center",
+        padding: "var(--space-12) var(--space-5)",
+        textAlign: "center",
       }}
     >
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: 999,
-          background: m.color,
-        }}
-      />
-      {m.label}
-    </span>
-  );
-}
-
-function ScoreDot({ value }: { value: number }) {
-  const color =
-    value >= 85
-      ? "var(--sage-500)"
-      : value >= 70
-        ? "var(--saffron-500)"
-        : "var(--ink-300)";
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        fontFamily: "var(--font-mono)",
-        fontSize: 13,
-        color: "var(--ink-900)",
-        fontWeight: 500,
-      }}
-    >
-      <span
-        style={{
-          width: 22,
-          height: 22,
-          borderRadius: 999,
-          background: color,
-          color: "#fff",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 11,
-          fontWeight: 700,
-        }}
-      >
-        {value}
-      </span>
-    </span>
-  );
-}
-
-// ---------------- Tag composer ----------------
-
-function TagComposer() {
-  const tags = [
-    "cottagecore floral",
-    "vintage botanical",
-    "hand drawn botanical",
-    "earth tone floral",
-    "moody floral repeat",
-  ];
-  const total = tags.join(", ").length;
-  return (
-    <div className="s-card" style={{ padding: 16 }}>
       <div
         style={{
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 10,
+          maxWidth: 440,
         }}
       >
-        <span className="eyebrow">Final tag string</span>
-        <span
+        <Icon name="star" size={32} color="var(--ink-300)" />
+        <h2
           style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 12,
-            color: total > 200 ? "var(--brick-500)" : "var(--ink-700)",
+            fontFamily: "var(--font-display)",
+            fontSize: 20,
+            fontWeight: 500,
+            color: "var(--ink-900)",
+            margin: "var(--space-3) 0 var(--space-1)",
+            letterSpacing: "-0.015em",
           }}
         >
-          {total} / 200 chars · {tags.length} / 13 tags
-        </span>
-      </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {tags.map((t) => (
-          <span
-            key={t}
-            className={"chip" + (t.length > 40 ? " chip--warn" : "")}
-          >
-            {t}
-            <button
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: 0,
-                marginLeft: 2,
-                display: "inline-flex",
-              }}
-              aria-label={`Remove ${t}`}
-            >
-              <Icon name="x" size={11} color="var(--ink-300)" />
-            </button>
-          </span>
-        ))}
-        <span className="chip chip--ghost">
-          <Icon name="plus" size={11} /> add tag
-        </span>
+          Your library is empty
+        </h2>
+        <p
+          style={{
+            color: "var(--ink-500)",
+            fontSize: 13.5,
+            lineHeight: 1.55,
+            margin: 0,
+          }}
+        >
+          Star words in the Seller Lab Chrome extension to save them here.
+          They&rsquo;ll appear grouped by character count.
+        </p>
       </div>
     </div>
-  );
-}
-
-// ---------------- Buckets rail ----------------
-
-function BucketsRail() {
-  return (
-    <aside
-      style={{
-        background: "var(--parchment-100)",
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-        padding: 14,
-        display: "flex",
-        flexDirection: "column",
-        minWidth: 0,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 12,
-        }}
-      >
-        <span className="eyebrow">Buckets</span>
-        <button
-          className="btn btn--ghost btn--sm"
-          style={{ padding: "3px 7px" }}
-        >
-          <Icon name="plus" size={11} /> New
-        </button>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {SAMPLE_BUCKETS.map((b) => (
-          <div
-            key={b.name}
-            style={{
-              background: "#fff",
-              border: "1px solid var(--border)",
-              borderRadius: 10,
-              padding: 10,
-            }}
-          >
-            <div
-              style={{ display: "flex", alignItems: "center", gap: 8 }}
-            >
-              <span
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: 3,
-                  background: b.color,
-                }}
-              />
-              <span
-                style={{
-                  flex: 1,
-                  fontSize: 13.5,
-                  fontWeight: 600,
-                  color: "var(--ink-900)",
-                }}
-              >
-                {b.name}
-              </span>
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--ink-500)",
-                }}
-              >
-                {b.count}
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                gap: 5,
-                marginTop: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              {b.tags.map((t) => (
-                <span
-                  key={t}
-                  className={"chip " + (b.chipClass ?? "")}
-                  style={{ padding: "3px 8px", fontSize: 11 }}
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div
-        style={{
-          marginTop: 16,
-          background: "var(--ink-900)",
-          color: "var(--parchment-50)",
-          padding: 12,
-          borderRadius: 10,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginBottom: 6,
-          }}
-        >
-          <Image
-            src="/assets/logo.svg"
-            alt=""
-            width={14}
-            height={14}
-            style={{ width: 14, height: 14 }}
-          />
-          <span
-            style={{
-              fontWeight: 600,
-              fontSize: 13,
-              color: "var(--parchment-50)",
-            }}
-          >
-            Tag draft · 14 / 40
-          </span>
-        </div>
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 12,
-            color: "var(--parchment-100)",
-            lineHeight: 1.5,
-          }}
-        >
-          cottagecore floral, vintage botanical, hand drawn botanical, earth
-          tone floral
-        </div>
-        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button
-            className="btn btn--accent btn--sm"
-            style={{ flex: 1 }}
-          >
-            <Icon name="copy" size={12} /> Copy
-          </button>
-          <button className="btn btn--ghost btn--sm">Open editor</button>
-        </div>
-      </div>
-    </aside>
   );
 }
