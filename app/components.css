@@ -170,7 +170,6 @@
 .chip--system  { background: var(--slate-100);   border-color: var(--slate-300);   color: var(--slate-700); }
 .chip--trend   { background: var(--plum-100);    border-color: var(--plum-300);    color: var(--plum-700); }
 .chip--starred { background: var(--saffron-100); border-color: var(--saffron-300); color: var(--saffron-700); }
-.chip--ai      { background: var(--saffron-100); border: 1.5px dashed var(--saffron-500); color: var(--saffron-700); }
 
 /* Dot variant — neutral chip with a colored leading dot. Use this when
    showing tags in a list and the taxonomy is supplementary information. */

@@ -16,13 +16,12 @@ const CORS_HEADERS = {
 const TOTAL_CAP = 150;
 
 // Priority for ordering returned words: Sold → Liked → Trend → Spoonflower
-// → AI → Uncategorized.
+// → Uncategorized.
 const CATEGORY_PRIORITY = [
   "Sold",
   "Liked",
   "Trend",
   "Spoonflower",
-  "AI",
 ] as const;
 
 type Row = {
