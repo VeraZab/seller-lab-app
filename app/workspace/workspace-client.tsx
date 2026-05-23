@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import { BrandLockup } from "@/components/brand";
 import { Icon } from "@/components/icon";
@@ -401,29 +409,43 @@ function CharBucketCard({
   const [pending, startTransition] = useTransition();
   const [busyWord, setBusyWord] = useState<string | null>(null);
 
-  const handleRemove = (word: string) => {
-    setBusyWord(word);
-    startTransition(async () => {
-      await removeKeyword(word);
-      setBusyWord(null);
-    });
-  };
+  const handleRemove = useCallback(
+    (word: string) => {
+      setBusyWord(word);
+      startTransition(async () => {
+        await removeKeyword(word);
+        setBusyWord(null);
+      });
+    },
+    [removeKeyword],
+  );
 
-  const handleUpdate = (oldWord: string, newWord: string) => {
-    setBusyWord(oldWord);
-    startTransition(async () => {
-      await updateKeyword(oldWord, newWord);
-      setBusyWord(null);
-    });
-  };
+  const handleUpdate = useCallback(
+    (oldWord: string, newWord: string) => {
+      setBusyWord(oldWord);
+      startTransition(async () => {
+        await updateKeyword(oldWord, newWord);
+        setBusyWord(null);
+      });
+    },
+    [updateKeyword],
+  );
 
-  const handleRecategorize = (word: string, category: string | null) => {
-    setBusyWord(word);
-    startTransition(async () => {
-      await recategorizeKeyword(word, category);
-      setBusyWord(null);
-    });
-  };
+  const handleRecategorize = useCallback(
+    (word: string, category: string | null) => {
+      setBusyWord(word);
+      startTransition(async () => {
+        await recategorizeKeyword(word, category);
+        setBusyWord(null);
+      });
+    },
+    [recategorizeKeyword],
+  );
+
+  const sortedWords = useMemo(
+    () => sortBucketWords(bucket.words),
+    [bucket.words],
+  );
 
   return (
     <section
@@ -491,7 +513,7 @@ function CharBucketCard({
           gap: "var(--space-2)",
         }}
       >
-        {sortBucketWords(bucket.words).map((w) => (
+        {sortedWords.map((w) => (
           <WordPill
             key={w.word}
             word={w.word}
@@ -500,9 +522,9 @@ function CharBucketCard({
             heatMax={
               w.category ? (heatMaxByCategory[w.category] ?? 1) : 1
             }
-            onRemove={() => handleRemove(w.word)}
-            onUpdate={(next) => handleUpdate(w.word, next)}
-            onRecategorize={(cat) => handleRecategorize(w.word, cat)}
+            onRemove={handleRemove}
+            onUpdate={handleUpdate}
+            onRecategorize={handleRecategorize}
             disabled={pending && busyWord === w.word}
           />
         ))}
@@ -511,7 +533,18 @@ function CharBucketCard({
   );
 }
 
-function WordPill({
+type WordPillProps = {
+  word: string;
+  category: string | null;
+  frequency: number;
+  heatMax: number;
+  onRemove: (word: string) => void;
+  onUpdate: (oldWord: string, newWord: string) => void;
+  onRecategorize: (word: string, category: string | null) => void;
+  disabled: boolean;
+};
+
+const WordPill = memo(function WordPill({
   word,
   category,
   frequency,
@@ -520,16 +553,7 @@ function WordPill({
   onUpdate,
   onRecategorize,
   disabled,
-}: {
-  word: string;
-  category: string | null;
-  frequency: number;
-  heatMax: number;
-  onRemove: () => void;
-  onUpdate: (next: string) => void;
-  onRecategorize: (category: string | null) => void;
-  disabled: boolean;
-}) {
+}: WordPillProps) {
   const c = categoryFor(category);
   const heatShade =
     c.heat && (c.name === "Sold" || c.name === "Liked")
@@ -542,7 +566,7 @@ function WordPill({
   const commit = () => {
     const next = draft.trim();
     setEditing(false);
-    if (next && next !== word) onUpdate(next);
+    if (next && next !== word) onUpdate(word, next);
     else setDraft(word);
   };
 
@@ -584,7 +608,7 @@ function WordPill({
         onOpenChange={setPickerOpen}
         onPick={(cat) => {
           setPickerOpen(false);
-          onRecategorize(cat);
+          onRecategorize(word, cat);
         }}
       />
       {editing ? (
@@ -636,14 +660,14 @@ function WordPill({
       )}
       <PillIconButton
         ariaLabel={`Remove ${word}`}
-        onClick={onRemove}
+        onClick={() => onRemove(word)}
         disabled={disabled || editing}
       >
         <Icon name="x" size={10} />
       </PillIconButton>
     </span>
   );
-}
+});
 
 function PillIconButton({
   children,

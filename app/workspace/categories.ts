@@ -59,6 +59,17 @@ export const CATEGORIES: CategoryDef[] = [
     heat: false,
     userSelectable: true,
   },
+  {
+    name: "AI",
+    chipClass: "chip--ai",
+    description: "Suggested by AI",
+    swatch: "var(--saffron-100)",
+    swatchBorder: "var(--saffron-500)",
+    legendFill: "var(--saffron-500)",
+    legendBorder: "var(--saffron-700)",
+    heat: false,
+    userSelectable: false,
+  },
 ];
 
 export const UNCATEGORIZED: CategoryDef = {
