@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// Extension-callable endpoint: takes a design image (base64), asks Gemini
-// which of the caller's saved keywords apply, fills the rest of the quota
-// with AI suggestions, and returns the result in the same char-bucket
-// shape the workspace page uses so the extension renders identically.
+// Extension-callable endpoint: takes a design image (base64), asks our
+// AI assistant which of the caller's saved keywords apply, and returns
+// the result in the same char-bucket shape the workspace page uses so
+// the extension renders identically.
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -31,7 +31,7 @@ type Row = {
   frequency: number | null;
 };
 
-type GeminiOutput = {
+type AiMatchOutput = {
   matched?: unknown;
   generated?: unknown;
 };
@@ -110,18 +110,19 @@ export async function POST(req: Request) {
   const libraryByNorm = new Map<string, Row>();
   for (const r of allRows) libraryByNorm.set(normalize(r.word), r);
 
-  const gemini = await callGemini({
+  const aiResult = await callAiAssistant({
     apiKey: geminiKey,
     imageBase64: image,
     mime,
     libraryWords: allRows.map((r) => r.word),
     totalCap: TOTAL_CAP,
   });
-  if (gemini === null) return json({ error: "Gemini call failed" }, 502);
+  if (aiResult === null)
+    return json({ error: "AI assistant call failed" }, 502);
 
-  // Collect verbatim library hits from BOTH matched and generated. Gemini
-  // sometimes mis-classifies a library word as "generated" — if the user
-  // has it saved we still want to return it.
+  // Collect verbatim library hits from BOTH matched and generated. The AI
+  // assistant sometimes mis-classifies a library word as "generated" — if
+  // the user has it saved we still want to return it.
   const seen = new Set<string>();
   const libraryHits: Row[] = [];
   const collectLibraryHits = (words: string[]) => {
@@ -134,8 +135,8 @@ export async function POST(req: Request) {
       seen.add(key);
     }
   };
-  collectLibraryHits(toStringArray(gemini.matched));
-  collectLibraryHits(toStringArray(gemini.generated));
+  collectLibraryHits(toStringArray(aiResult.matched));
+  collectLibraryHits(toStringArray(aiResult.generated));
 
   libraryHits.sort(compareByPriorityThenFreq);
   const out = libraryHits.slice(0, TOTAL_CAP);
@@ -151,13 +152,13 @@ export async function POST(req: Request) {
   });
 }
 
-async function callGemini(args: {
+async function callAiAssistant(args: {
   apiKey: string;
   imageBase64: string;
   mime: string;
   libraryWords: string[];
   totalCap: number;
-}): Promise<GeminiOutput | null> {
+}): Promise<AiMatchOutput | null> {
   const prompt = `You are tagging a design for a Spoonflower listing — a marketplace for fabric, wallpaper, and home goods. Your job: pick keywords from the user's library that apply to the attached design.
 
 RULES:
@@ -200,12 +201,12 @@ Respond with this JSON shape (the "generated" array must be empty):
       }),
     });
   } catch (e) {
-    console.error("[match] Gemini fetch failed", e);
+    console.error("[match] AI assistant fetch failed", e);
     return null;
   }
 
   if (!res.ok) {
-    console.error("[match] Gemini non-2xx", res.status, await res.text());
+    console.error("[match] AI assistant non-2xx", res.status, await res.text());
     return null;
   }
   const data = (await res.json()) as {
@@ -213,15 +214,15 @@ Respond with this JSON shape (the "generated" array must be empty):
   };
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
-    console.error("[match] Gemini empty text", data);
+    console.error("[match] AI assistant empty text", data);
     return null;
   }
   try {
     const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === "object") return parsed as GeminiOutput;
+    if (parsed && typeof parsed === "object") return parsed as AiMatchOutput;
     return null;
   } catch {
-    console.error("[match] Gemini non-JSON text", text);
+    console.error("[match] AI assistant non-JSON text", text);
     return null;
   }
 }

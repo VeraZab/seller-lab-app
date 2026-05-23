@@ -861,7 +861,7 @@ function FAQ() {
     },
     {
       q: "Does my data leave the browser?",
-      a: "The free Chrome extension is fully local. Pro stores your buckets and keyword sets in your account so they sync across devices. AI keyword matching sends the design image you upload to Google's Gemini API. Your shop data is never sold and never used to train models.",
+      a: "The free Chrome extension is fully local. Pro stores your buckets and keyword sets in your account so they sync across devices. AI keyword matching sends the design image you upload to our AI assistant for tagging. Your shop data is never sold and never used to train models.",
     },
     {
       q: "What if I cancel?",
