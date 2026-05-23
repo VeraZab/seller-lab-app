@@ -119,10 +119,9 @@ export async function POST(req: Request) {
   });
   if (gemini === null) return json({ error: "Gemini call failed" }, 502);
 
-  // 1. Collect verbatim library hits from BOTH matched and generated. Gemini
-  //    sometimes mis-classifies a library word as "generated" — if the user
-  //    has it saved we still want to return it (with its stored category),
-  //    and the low-value filter never applies to library hits.
+  // Collect verbatim library hits from BOTH matched and generated. Gemini
+  // sometimes mis-classifies a library word as "generated" — if the user
+  // has it saved we still want to return it.
   const seen = new Set<string>();
   const libraryHits: Row[] = [];
   const collectLibraryHits = (words: string[]) => {
@@ -138,33 +137,14 @@ export async function POST(req: Request) {
   collectLibraryHits(toStringArray(gemini.matched));
   collectLibraryHits(toStringArray(gemini.generated));
 
-  // 2. Sort library hits by category priority, then frequency desc, then
-  //    alphabetically.
   libraryHits.sort(compareByPriorityThenFreq);
-
-  // 3. Fill the rest of the 150-quota with AI-tagged generated suggestions
-  //    (Gemini-produced, NOT in library). Reject generic / stopword tags
-  //    here — library hits already bypassed this filter above.
-  const out: Row[] = libraryHits.slice(0, TOTAL_CAP);
-  if (out.length < TOTAL_CAP) {
-    for (const w of toStringArray(gemini.generated)) {
-      const trimmed = String(w).trim();
-      const key = normalize(trimmed);
-      if (!key || seen.has(key)) continue;
-      if (libraryByNorm.has(key)) continue;
-      if (isLowValueTag(trimmed)) continue;
-      out.push({ word: trimmed, category: "AI", frequency: 1 });
-      seen.add(key);
-      if (out.length >= TOTAL_CAP) break;
-    }
-  }
+  const out = libraryHits.slice(0, TOTAL_CAP);
 
   return json({
     buckets: groupByCharCount(out),
     heatMaxByCategory: computeHeatMaxByCategory(out),
     counts: {
-      library: libraryHits.length,
-      ai: out.length - libraryHits.length,
+      library: out.length,
       total: out.length,
       cap: TOTAL_CAP,
     },
@@ -178,27 +158,19 @@ async function callGemini(args: {
   libraryWords: string[];
   totalCap: number;
 }): Promise<GeminiOutput | null> {
-  const prompt = `You are tagging a design for a Spoonflower listing — a marketplace for fabric, wallpaper, and home goods (curtains, bedding, kitchen textiles, baby blankets, gift wrap, peel-and-stick wallpaper). Tags must drive search traffic from buyers shopping for HOME and TEXTILE products.
+  const prompt = `You are tagging a design for a Spoonflower listing — a marketplace for fabric, wallpaper, and home goods. Your job: pick keywords from the user's library that visually or thematically apply to the attached design.
 
-Look at the attached design and produce keyword tags that apply.
-
-Step 1 — From the library below, pick the keywords that visually or thematically apply. Use them VERBATIM (no rephrasing, splitting, or combining).
-Step 2 — Then suggest NEW keywords (not in the library) that would also apply, prioritizing high-search-volume Spoonflower terms. These fill the remaining quota.
-
-STRICT RULES — keywords that violate these must be EXCLUDED from both lists:
-- No generic single words. NEVER include: "and", "or", "the", "for", "with", "art", "design", "pattern", "fabric", "wallpaper", "print", "color", "decor", "style", "home" — these are too broad to rank in search.
-- No off-domain keywords. Skip anything that doesn't apply to fabric / wallpaper / surface design / home goods (no automotive, electronics, sports, finance, medical, etc.).
-- Each tag must be at least 3 characters and at least 2 words OR a specific compound descriptor (e.g. "cottagecore", "art nouveau", "muted earth tones", "kitchen towel", "baby blanket", "vintage botanical", "dark academia").
-- Tags should be a style, motif, aesthetic, use case, color story, or specific product category — not a single common noun.
-
-Goal: up to ${args.totalCap} total tags. Library matches are preferred over generated ones. If you have fewer good options than the cap, return fewer — quality over quantity.
+RULES:
+- Use words VERBATIM from the library. No rephrasing, splitting, or combining.
+- Only return library words that actually fit the design — quality over quantity.
+- If a library word is too generic ("and", "the", "fabric", "wallpaper", "design", "art", "home", etc.), skip it.
 
 Library: ${JSON.stringify(args.libraryWords)}
 
-Respond with this JSON shape:
+Respond with this JSON shape (the "generated" array must be empty):
 {
   "matched": [verbatim library words that apply, best-fit first],
-  "generated": [new keywords not in library, best-fit first]
+  "generated": []
 }`;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(args.apiKey)}`;
@@ -265,25 +237,6 @@ function priorityRank(category: string | null): number {
   const lower = category.toLowerCase();
   const idx = CATEGORY_PRIORITY.findIndex((c) => c.toLowerCase() === lower);
   return idx === -1 ? CATEGORY_PRIORITY.length : idx;
-}
-
-// Low-value tag blocklist — generic single-noun / stopword tags that would
-// dilute search rank if returned as AI fillers. Library hits bypass this
-// filter (if the user explicitly saved one of these, they keep it).
-// Edit this list directly in code; deploys are the source of truth.
-const LOW_VALUE_TAGS = new Set<string>([
-  "a", "an", "and", "or", "the", "for", "with", "of", "to", "in", "on",
-  "at", "by", "is", "it",
-  "art", "design", "pattern", "patterns", "fabric", "fabrics",
-  "wallpaper", "print", "prints", "color", "colors", "colour", "colours",
-  "decor", "decoration", "style", "styled", "home", "house", "nice",
-  "pretty", "beautiful", "peel-and-stick", "room", "project", "gift",
-]);
-
-function isLowValueTag(word: string): boolean {
-  const n = word.trim();
-  if (n.length < 3) return true;
-  return LOW_VALUE_TAGS.has(n.toLowerCase());
 }
 
 function toStringArray(x: unknown): string[] {

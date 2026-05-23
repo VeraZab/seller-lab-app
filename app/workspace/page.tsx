@@ -26,6 +26,12 @@ export default async function WorkspacePage() {
     .eq("id", user.id)
     .maybeSingle();
 
+  // Workspace is a paid-only surface. Unpaid sessions get bounced to the
+  // marketing page (no in-app upgrade flow yet).
+  if (profile?.plan !== "paid") {
+    redirect("/");
+  }
+
   const { data: keywordRows } = await supabase
     .from("user_keywords")
     .select("word, category, frequency")
