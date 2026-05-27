@@ -337,7 +337,41 @@ function KeywordLibrary({
   setKeywordKind,
   pushToast,
 }: KeywordLibraryProps) {
+  // Single-select source filter. null = show all sources.
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+
   const totalWords = buckets.reduce((sum, b) => sum + b.words.length, 0);
+
+  // Word count per canonical category slug — drives the legend chip counts
+  // and lets us disable sources that have nothing to show.
+  const countsByCategory = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const b of buckets) {
+      for (const w of b.words) {
+        const key = (w.category ?? "").toLowerCase();
+        m[key] = (m[key] ?? 0) + 1;
+      }
+    }
+    return m;
+  }, [buckets]);
+
+  const filteredBuckets = useMemo(() => {
+    if (!activeCategory) return buckets;
+    const target = activeCategory.toLowerCase();
+    return buckets
+      .map((b) => ({
+        ...b,
+        words: b.words.filter(
+          (w) => (w.category ?? "").toLowerCase() === target,
+        ),
+      }))
+      .filter((b) => b.words.length > 0);
+  }, [buckets, activeCategory]);
+
+  const shownWords = filteredBuckets.reduce(
+    (sum, b) => sum + b.words.length,
+    0,
+  );
 
   return (
     <div
@@ -357,18 +391,25 @@ function KeywordLibrary({
           gap: "var(--space-5)",
         }}
       >
-        <Header
-          totalWords={totalWords}
-          bucketCount={buckets.length}
-        />
+        <Header totalWords={shownWords} />
         <AddKeywordsBar
           addKeywords={addKeywords}
           importKeywordsFromCsv={importKeywordsFromCsv}
           pushToast={pushToast}
         />
-        <Legend />
+        <Legend
+          activeCategory={activeCategory}
+          countsByCategory={countsByCategory}
+          totalCount={totalWords}
+          onSelect={setActiveCategory}
+        />
         {buckets.length === 0 ? (
           <EmptyLibrary />
+        ) : filteredBuckets.length === 0 ? (
+          <FilterEmpty
+            category={activeCategory}
+            onClear={() => setActiveCategory(null)}
+          />
         ) : (
           <div
             style={{
@@ -377,7 +418,7 @@ function KeywordLibrary({
               gap: "var(--space-4)",
             }}
           >
-            {buckets.map((b) => (
+            {filteredBuckets.map((b) => (
               <KindBucketCard
                 key={b.kind}
                 bucket={b}
@@ -395,13 +436,7 @@ function KeywordLibrary({
   );
 }
 
-function Header({
-  totalWords,
-  bucketCount,
-}: {
-  totalWords: number;
-  bucketCount: number;
-}) {
+function Header({ totalWords }: { totalWords: number }) {
   return (
     <div>
       <div className="eyebrow" style={{ color: "var(--ink-500)" }}>
@@ -418,11 +453,7 @@ function Header({
           lineHeight: 1.1,
         }}
       >
-        {totalWords} {totalWords === 1 ? "word" : "words"}{" "}
-        <span style={{ color: "var(--ink-300)" }}>·</span>{" "}
-        <span style={{ color: "var(--ink-500)", fontWeight: 400 }}>
-          {bucketCount} {bucketCount === 1 ? "kind" : "kinds"}
-        </span>
+        {totalWords} {totalWords === 1 ? "word" : "words"}
       </h1>
     </div>
   );
@@ -1276,67 +1307,217 @@ function HeatLegendSwatch({ base }: { base: "sold" | "liked" }) {
       aria-hidden
       style={{
         display: "inline-flex",
+        alignItems: "stretch",
         borderRadius: 999,
         overflow: "hidden",
         border: `1.5px solid ${shades[3].border}`,
+        boxSizing: "border-box",
         height: 14,
+        width: 30,
+        flexShrink: 0,
         boxShadow: "var(--shadow-xs)",
       }}
     >
-      <span style={{ width: 10, background: shades[1].bg }} />
-      <span style={{ width: 10, background: shades[2].bg }} />
-      <span style={{ width: 10, background: shades[3].bg }} />
+      <span style={{ flex: 1, background: shades[1].bg }} />
+      <span style={{ flex: 1, background: shades[2].bg }} />
+      <span style={{ flex: 1, background: shades[3].bg }} />
     </span>
   );
 }
 
-function Legend() {
+function Legend({
+  activeCategory,
+  countsByCategory,
+  totalCount,
+  onSelect,
+}: {
+  activeCategory: string | null;
+  countsByCategory: Record<string, number>;
+  totalCount: number;
+  onSelect: (category: string | null) => void;
+}) {
   return (
     <div
       style={{
         display: "flex",
         flexWrap: "wrap",
         alignItems: "center",
-        gap: "var(--space-4)",
+        gap: "var(--space-2)",
         fontSize: 12,
         color: "var(--ink-500)",
       }}
     >
       <span
         className="eyebrow"
-        style={{ color: "var(--ink-500)" }}
+        style={{
+          color: "var(--ink-500)",
+          marginRight: "var(--space-1)",
+          lineHeight: 1,
+        }}
       >
         Sources
       </span>
-      {CATEGORIES.map((c) => (
-        <span
-          key={c.name}
-          title={c.description}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            color: "var(--ink-700)",
-            fontSize: 12.5,
-          }}
-        >
-          {c.heat ? (
-            <HeatLegendSwatch base={c.name as "sold" | "liked"} />
-          ) : (
-            <span
-              style={{
-                width: 14,
-                height: 14,
-                borderRadius: 999,
-                background: c.legendFill,
-                border: `1.5px solid ${c.legendBorder}`,
-                boxShadow: "var(--shadow-xs)",
-              }}
-            />
-          )}
-          {c.label}
-        </span>
-      ))}
+      <LegendChip
+        label="All"
+        count={totalCount}
+        active={activeCategory === null}
+        dimmed={false}
+        onClick={() => onSelect(null)}
+      />
+      {CATEGORIES.map((c) => {
+        const count = countsByCategory[c.name.toLowerCase()] ?? 0;
+        const active = activeCategory?.toLowerCase() === c.name.toLowerCase();
+        return (
+          <LegendChip
+            key={c.name}
+            label={c.label}
+            title={c.description}
+            count={count}
+            active={!!active}
+            dimmed={activeCategory !== null && !active}
+            // Keep the active chip clickable (to toggle off) even if a
+            // background refresh dropped its count to 0.
+            disabled={count === 0 && !active}
+            onClick={() => onSelect(active ? null : c.name)}
+            swatch={
+              c.heat ? (
+                <HeatLegendSwatch base={c.name as "sold" | "liked"} />
+              ) : (
+                <span
+                  style={{
+                    boxSizing: "border-box",
+                    width: 14,
+                    height: 14,
+                    borderRadius: 999,
+                    background: c.legendFill,
+                    border: `1.5px solid ${c.legendBorder}`,
+                    boxShadow: "var(--shadow-xs)",
+                    flexShrink: 0,
+                  }}
+                />
+              )
+            }
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function LegendChip({
+  label,
+  title,
+  count,
+  active,
+  dimmed,
+  disabled = false,
+  onClick,
+  swatch,
+}: {
+  label: string;
+  title?: string;
+  count?: number;
+  active: boolean;
+  dimmed: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  swatch?: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "5px 10px",
+        borderRadius: 999,
+        border: `1px solid ${active ? "var(--ink-300)" : "transparent"}`,
+        background: active ? "var(--parchment-200)" : "transparent",
+        color: "var(--ink-700)",
+        fontFamily: "var(--font-body)",
+        fontSize: 12.5,
+        fontWeight: active ? 600 : 500,
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.4 : dimmed ? 0.5 : 1,
+        transition:
+          "opacity 120ms ease-out, background 120ms ease-out, border-color 120ms ease-out",
+        lineHeight: 1,
+      }}
+      onMouseEnter={(e) => {
+        if (disabled || active) return;
+        e.currentTarget.style.background = "var(--parchment-100)";
+      }}
+      onMouseLeave={(e) => {
+        if (active) return;
+        e.currentTarget.style.background = "transparent";
+      }}
+    >
+      {swatch}
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "baseline",
+          gap: 6,
+          lineHeight: 1,
+        }}
+      >
+        <span>{label}</span>
+        {typeof count === "number" && (
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--ink-500)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {count}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+function FilterEmpty({
+  category,
+  onClear,
+}: {
+  category: string | null;
+  onClear: () => void;
+}) {
+  const label = categoryFor(category).label;
+  return (
+    <div
+      className="s-card s-card--tinted"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "var(--space-3)",
+        padding: "var(--space-10) var(--space-5)",
+        textAlign: "center",
+      }}
+    >
+      <Icon name="star" size={28} color="var(--ink-300)" />
+      <p
+        style={{
+          color: "var(--ink-700)",
+          fontSize: 14,
+          margin: 0,
+        }}
+      >
+        No words in <strong>{label}</strong> yet.
+      </p>
+      <button type="button" className="btn btn--ghost btn--sm" onClick={onClear}>
+        Show all sources
+      </button>
     </div>
   );
 }
