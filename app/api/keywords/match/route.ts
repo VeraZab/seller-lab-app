@@ -15,13 +15,15 @@ const CORS_HEADERS = {
 
 const TOTAL_CAP = 150;
 
-// Priority for ordering returned words: Sold → Liked → Trend → Spoonflower
-// → Uncategorized.
+// Priority for ordering returned words: sold → liked → trend → user →
+// spoonflower. Lowercase slugs match the canonical DB convention; lookup
+// is case-insensitive defensively.
 const CATEGORY_PRIORITY = [
-  "Sold",
-  "Liked",
-  "Trend",
-  "Spoonflower",
+  "sold",
+  "liked",
+  "trend",
+  "user",
+  "spoonflower",
 ] as const;
 
 type Row = {

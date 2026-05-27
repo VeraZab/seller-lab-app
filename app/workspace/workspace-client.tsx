@@ -12,14 +12,19 @@ import {
 import { useRouter } from "next/navigation";
 import { BrandLockup } from "@/components/brand";
 import { Icon } from "@/components/icon";
+import { ToastViewport, useToasts, type Toast } from "@/components/toast";
 import {
   CATEGORIES,
+  CATEGORY,
   HEAT_SHADES,
-  UNCATEGORIZED,
   categoryFor,
   categoryRank,
   heatLevel,
+  normalizeCategory,
 } from "./categories";
+import { KIND_HINTS, KINDS, UNCATEGORIZED_KIND, normalizeKind } from "./kinds";
+import { normalizeWord } from "./words";
+import type { CsvImportResult } from "./actions";
 
 type SessionUser = {
   email: string;
@@ -34,14 +39,14 @@ export type SavedWord = {
   frequency: number;
 };
 
-export type CharBucket = {
-  charCount: number;
+export type KindBucket = {
+  kind: string;
   words: SavedWord[];
 };
 
 type WorkspaceClientProps = {
   user: SessionUser;
-  buckets: CharBucket[];
+  buckets: KindBucket[];
   heatMaxByCategory: Record<string, number>;
   signOut: () => Promise<void>;
   removeKeyword: (word: string) => Promise<void>;
@@ -51,8 +56,16 @@ type WorkspaceClientProps = {
     category: string | null,
   ) => Promise<void>;
   addKeywords: (
-    entries: { word: string; category: string | null }[],
+    entries: {
+      word: string;
+      category: string | null;
+      kind?: string | null;
+    }[],
   ) => Promise<void>;
+  importKeywordsFromCsv: (
+    entries: { word: string; category: string; kind: string }[],
+  ) => Promise<CsvImportResult>;
+  setKeywordKind: (word: string, kind: string | null) => Promise<void>;
 };
 
 // ---------------- Page ----------------
@@ -66,8 +79,11 @@ export default function WorkspaceClient({
   updateKeyword,
   recategorizeKeyword,
   addKeywords,
+  importKeywordsFromCsv,
+  setKeywordKind,
 }: WorkspaceClientProps) {
   const router = useRouter();
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
 
   useEffect(() => {
     const id = setInterval(() => router.refresh(), 30_000);
@@ -101,11 +117,17 @@ export default function WorkspaceClient({
           updateKeyword={updateKeyword}
           recategorizeKeyword={recategorizeKeyword}
           addKeywords={addKeywords}
+          importKeywordsFromCsv={importKeywordsFromCsv}
+          setKeywordKind={setKeywordKind}
+          pushToast={pushToast}
         />
       </div>
+      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
+
+type PushToast = (toast: Omit<Toast, "id">) => number;
 
 // ---------------- Sidebar ----------------
 
@@ -282,7 +304,7 @@ function Sidebar({ user, signOut }: SidebarProps) {
 // ---------------- Keyword Library ----------------
 
 type KeywordLibraryProps = {
-  buckets: CharBucket[];
+  buckets: KindBucket[];
   heatMaxByCategory: Record<string, number>;
   removeKeyword: (word: string) => Promise<void>;
   updateKeyword: (oldWord: string, newWord: string) => Promise<void>;
@@ -291,8 +313,17 @@ type KeywordLibraryProps = {
     category: string | null,
   ) => Promise<void>;
   addKeywords: (
-    entries: { word: string; category: string | null }[],
+    entries: {
+      word: string;
+      category: string | null;
+      kind?: string | null;
+    }[],
   ) => Promise<void>;
+  importKeywordsFromCsv: (
+    entries: { word: string; category: string; kind: string }[],
+  ) => Promise<CsvImportResult>;
+  setKeywordKind: (word: string, kind: string | null) => Promise<void>;
+  pushToast: PushToast;
 };
 
 function KeywordLibrary({
@@ -302,6 +333,9 @@ function KeywordLibrary({
   updateKeyword,
   recategorizeKeyword,
   addKeywords,
+  importKeywordsFromCsv,
+  setKeywordKind,
+  pushToast,
 }: KeywordLibraryProps) {
   const totalWords = buckets.reduce((sum, b) => sum + b.words.length, 0);
 
@@ -327,7 +361,11 @@ function KeywordLibrary({
           totalWords={totalWords}
           bucketCount={buckets.length}
         />
-        <AddKeywordsBar addKeywords={addKeywords} />
+        <AddKeywordsBar
+          addKeywords={addKeywords}
+          importKeywordsFromCsv={importKeywordsFromCsv}
+          pushToast={pushToast}
+        />
         <Legend />
         {buckets.length === 0 ? (
           <EmptyLibrary />
@@ -340,13 +378,14 @@ function KeywordLibrary({
             }}
           >
             {buckets.map((b) => (
-              <CharBucketCard
-                key={b.charCount}
+              <KindBucketCard
+                key={b.kind}
                 bucket={b}
                 heatMaxByCategory={heatMaxByCategory}
                 removeKeyword={removeKeyword}
                 updateKeyword={updateKeyword}
                 recategorizeKeyword={recategorizeKeyword}
+                setKeywordKind={setKeywordKind}
               />
             ))}
           </div>
@@ -382,22 +421,22 @@ function Header({
         {totalWords} {totalWords === 1 ? "word" : "words"}{" "}
         <span style={{ color: "var(--ink-300)" }}>·</span>{" "}
         <span style={{ color: "var(--ink-500)", fontWeight: 400 }}>
-          {bucketCount} {bucketCount === 1 ? "bucket" : "buckets"} by character
-          count
+          {bucketCount} {bucketCount === 1 ? "kind" : "kinds"}
         </span>
       </h1>
     </div>
   );
 }
 
-function CharBucketCard({
+function KindBucketCard({
   bucket,
   heatMaxByCategory,
   removeKeyword,
   updateKeyword,
   recategorizeKeyword,
+  setKeywordKind,
 }: {
-  bucket: CharBucket;
+  bucket: KindBucket;
   heatMaxByCategory: Record<string, number>;
   removeKeyword: (word: string) => Promise<void>;
   updateKeyword: (oldWord: string, newWord: string) => Promise<void>;
@@ -405,9 +444,11 @@ function CharBucketCard({
     word: string,
     category: string | null,
   ) => Promise<void>;
+  setKeywordKind: (word: string, kind: string | null) => Promise<void>;
 }) {
   const [pending, startTransition] = useTransition();
   const [busyWord, setBusyWord] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const handleRemove = useCallback(
     (word: string) => {
@@ -447,64 +488,106 @@ function CharBucketCard({
     [bucket.words],
   );
 
+  const onDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("application/x-keyword-word")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (!dragOver) setDragOver(true);
+  };
+
+  const onDragLeave = (e: React.DragEvent) => {
+    // Only flip off when leaving the card boundary, not when crossing a
+    // child element.
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setDragOver(false);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const word = e.dataTransfer.getData("application/x-keyword-word");
+    if (!word) return;
+    // Same-bucket drop is a no-op.
+    const fromKind = e.dataTransfer.getData("application/x-keyword-from");
+    if (fromKind === bucket.kind) return;
+    setBusyWord(word);
+    startTransition(async () => {
+      await setKeywordKind(
+        word,
+        bucket.kind === UNCATEGORIZED_KIND ? null : bucket.kind,
+      );
+      setBusyWord(null);
+    });
+  };
+
   return (
     <section
       className="s-card"
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       style={{
         padding: "var(--space-4) var(--space-5) var(--space-5)",
+        outline: dragOver ? "2px dashed var(--saffron-500)" : "none",
+        outlineOffset: dragOver ? -2 : 0,
+        transition: "outline-color 120ms ease-out",
       }}
     >
       <header
         style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: "var(--space-3)",
           marginBottom: "var(--space-3)",
           paddingBottom: "var(--space-3)",
           borderBottom: "1px solid var(--parchment-200)",
         }}
       >
-        <h2
+        <div
           style={{
-            fontFamily: "var(--font-display)",
-            fontSize: 22,
-            fontWeight: 500,
-            color: "var(--ink-900)",
-            letterSpacing: "-0.015em",
-            margin: 0,
-            display: "inline-flex",
+            display: "flex",
             alignItems: "baseline",
-            gap: 6,
+            justifyContent: "space-between",
+            gap: "var(--space-3)",
           }}
         >
-          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>
-            {bucket.charCount}
-          </span>
-          <span
+          <h2
             style={{
-              fontFamily: "var(--font-body)",
-              fontSize: 12,
+              fontFamily: "var(--font-display)",
+              fontSize: 22,
               fontWeight: 500,
-              color: "var(--ink-500)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
+              color: "var(--ink-900)",
+              letterSpacing: "-0.015em",
+              margin: 0,
+              lineHeight: 1.1,
             }}
           >
-            {bucket.charCount === 1 ? "char" : "chars"}
+            {bucket.kind}
+          </h2>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11.5,
+              color: "var(--ink-500)",
+              fontVariantNumeric: "tabular-nums",
+              flexShrink: 0,
+            }}
+          >
+            {bucket.words.length}{" "}
+            {bucket.words.length === 1 ? "word" : "words"}
           </span>
-        </h2>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11.5,
-            color: "var(--ink-500)",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {bucket.words.length}{" "}
-          {bucket.words.length === 1 ? "word" : "words"}
-        </span>
+        </div>
+        {KIND_HINTS[bucket.kind] && (
+          <div
+            style={{
+              fontFamily: "var(--font-body)",
+              fontSize: 11.5,
+              fontWeight: 400,
+              color: "var(--ink-500)",
+              lineHeight: 1.35,
+              marginTop: 2,
+            }}
+          >
+            {KIND_HINTS[bucket.kind]}
+          </div>
+        )}
       </header>
       <div
         style={{
@@ -522,6 +605,7 @@ function CharBucketCard({
             heatMax={
               w.category ? (heatMaxByCategory[w.category] ?? 1) : 1
             }
+            sourceKind={bucket.kind}
             onRemove={handleRemove}
             onUpdate={handleUpdate}
             onRecategorize={handleRecategorize}
@@ -538,6 +622,7 @@ type WordPillProps = {
   category: string | null;
   frequency: number;
   heatMax: number;
+  sourceKind: string;
   onRemove: (word: string) => void;
   onUpdate: (oldWord: string, newWord: string) => void;
   onRecategorize: (word: string, category: string | null) => void;
@@ -549,6 +634,7 @@ const WordPill = memo(function WordPill({
   category,
   frequency,
   heatMax,
+  sourceKind,
   onRemove,
   onUpdate,
   onRecategorize,
@@ -556,12 +642,13 @@ const WordPill = memo(function WordPill({
 }: WordPillProps) {
   const c = categoryFor(category);
   const heatShade =
-    c.heat && (c.name === "Sold" || c.name === "Liked")
+    c.heat && (c.name === CATEGORY.SOLD || c.name === CATEGORY.LIKED)
       ? HEAT_SHADES[c.name][heatLevel(frequency, heatMax)]
       : null;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(word);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   const commit = () => {
     const next = draft.trim();
@@ -575,9 +662,25 @@ const WordPill = memo(function WordPill({
     setEditing(false);
   };
 
+  const onDragStart = (e: React.DragEvent) => {
+    if (editing || disabled) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-keyword-word", word);
+    e.dataTransfer.setData("application/x-keyword-from", sourceKind);
+    setDragging(true);
+  };
+
+  const onDragEnd = () => setDragging(false);
+
   return (
     <span
       className={`chip ${heatShade ? "" : c.chipClass}`}
+      draggable={!editing && !disabled}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -587,7 +690,8 @@ const WordPill = memo(function WordPill({
         fontFamily: "var(--font-mono)",
         borderRadius: 999,
         boxShadow: "none",
-        opacity: disabled ? 0.5 : 1,
+        opacity: disabled ? 0.5 : dragging ? 0.4 : 1,
+        cursor: editing || disabled ? "default" : "grab",
         transition: "opacity 160ms ease-out",
         position: "relative",
         ...(heatShade
@@ -735,7 +839,7 @@ function CategoryDot({
 }) {
   const c = categoryFor(category);
   const heatShade =
-    c.heat && (c.name === "Sold" || c.name === "Liked")
+    c.heat && (c.name === CATEGORY.SOLD || c.name === CATEGORY.LIKED)
       ? HEAT_SHADES[c.name][heatLevel(frequency, heatMax)]
       : null;
   const dotBg = heatShade?.bg ?? c.swatch;
@@ -764,8 +868,8 @@ function CategoryDot({
         type="button"
         disabled={disabled}
         onClick={() => onOpenChange(!open)}
-        aria-label={`Change category (currently ${c.name})`}
-        title={`${c.name} — click to recategorize`}
+        aria-label={`Change category (currently ${c.label})`}
+        title={`${c.label} — click to recategorize`}
         style={{
           width: 16,
           height: 16,
@@ -802,7 +906,7 @@ function CategoryMenu({
   current: string;
   onPick: (category: string | null) => void;
 }) {
-  const options = [...CATEGORIES, UNCATEGORIZED];
+  const options = CATEGORIES;
   return (
     <div
       role="menu"
@@ -822,7 +926,7 @@ function CategoryMenu({
     >
       {options.map((opt) => {
         const isCurrent = opt.name === current;
-        const value = opt === UNCATEGORIZED ? null : opt.name;
+        const value = opt.name;
         return (
           <button
             key={opt.name}
@@ -867,7 +971,7 @@ function CategoryMenu({
                 flexShrink: 0,
               }}
             />
-            <span style={{ flex: 1 }}>{opt.name}</span>
+            <span style={{ flex: 1 }}>{opt.label}</span>
             {isCurrent && (
               <Icon name="check" size={12} color="var(--ink-500)" />
             )}
@@ -880,25 +984,41 @@ function CategoryMenu({
 
 function AddKeywordsBar({
   addKeywords,
+  importKeywordsFromCsv,
+  pushToast,
 }: {
   addKeywords: (
-    entries: { word: string; category: string | null }[],
+    entries: {
+      word: string;
+      category: string | null;
+      kind?: string | null;
+    }[],
   ) => Promise<void>;
+  importKeywordsFromCsv: (
+    entries: { word: string; category: string; kind: string }[],
+  ) => Promise<CsvImportResult>;
+  pushToast: PushToast;
 }) {
   const [value, setValue] = useState("");
-  const [category, setCategory] = useState<string>("Spoonflower");
+  const [category, setCategory] = useState<string>(CATEGORY.USER);
+  // Preselect the first canonical kind so adding a word forces an explicit
+  // categorization choice. "Auto" stays as the last option in the dropdown
+  // as a fallback for when the user genuinely doesn't know — but it's not
+  // the default to discourage lazy classification.
+  const [kind, setKind] = useState<string>(KINDS[0]);
   const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
     const words = splitWords(value);
     if (!words.length) return;
     const cat = category || null;
+    const k = kind || null;
     startTransition(async () => {
-      await addKeywords(words.map((w) => ({ word: w, category: cat })));
+      await addKeywords(
+        words.map((w) => ({ word: w, category: cat, kind: k })),
+      );
       setValue("");
-      setError(null);
     });
   };
 
@@ -912,20 +1032,34 @@ function AddKeywordsBar({
   };
 
   const handleFile = (file: File) => {
-    setError(null);
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? "");
-      const entries = parseCsv(text);
+      const { entries, skipped } = parseCsv(text);
       if (!entries.length) {
-        setError("No keywords found in file.");
+        pushToast({
+          kind: "error",
+          message:
+            skipped > 0
+              ? `No valid rows in CSV (skipped ${skipped} — check word, category, kind columns).`
+              : "No keywords found in CSV.",
+        });
         return;
       }
       startTransition(async () => {
-        await addKeywords(entries);
+        const result = await importKeywordsFromCsv(entries);
+        const parts: string[] = [`Imported ${result.written}`];
+        if (result.keptTrend > 0)
+          parts.push(`kept ${result.keptTrend} in Trend`);
+        if (skipped > 0) parts.push(`skipped ${skipped} invalid`);
+        pushToast({
+          kind: skipped > 0 ? "info" : "success",
+          message: parts.join(" · "),
+        });
       });
     };
-    reader.onerror = () => setError("Couldn't read that file.");
+    reader.onerror = () =>
+      pushToast({ kind: "error", message: "Couldn't read that file." });
     reader.readAsText(file);
   };
 
@@ -949,7 +1083,7 @@ function AddKeywordsBar({
       >
         <input
           className="input"
-          placeholder="Type or paste keyword (use hyphen to keep multi word together)"
+          placeholder="Type or paste keyword"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onPaste={handlePaste}
@@ -963,18 +1097,33 @@ function AddKeywordsBar({
           style={{ flex: "1 1 280px", minWidth: 220 }}
         />
         <select
-          className="select"
+          className="select select--compact"
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+          disabled={pending}
+          title="Kind — what the word is about. Defaults to the first kind; use Auto only as a fallback when you genuinely don't know."
+          style={{ width: "auto", flexShrink: 0 }}
+        >
+          {KINDS.map((k) => (
+            <option key={k} value={k}>
+              {k}
+            </option>
+          ))}
+          <option value="">Auto</option>
+        </select>
+        <select
+          className="select select--compact"
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           disabled={pending}
-          style={{ width: "auto", minWidth: 160, flexShrink: 0 }}
+          title="Source — where the word came from"
+          style={{ width: "auto", flexShrink: 0 }}
         >
           {CATEGORIES.filter((c) => c.userSelectable).map((c) => (
             <option key={c.name} value={c.name}>
-              {c.name}
+              {c.label}
             </option>
           ))}
-          <option value="">Uncategorized</option>
         </select>
         <button
           type="button"
@@ -998,7 +1147,7 @@ function AddKeywordsBar({
           className="btn btn--ghost btn--sm"
           onClick={() => fileRef.current?.click()}
           disabled={pending}
-          title="CSV columns: word, category (category optional)"
+          title="CSV columns: word, category, kind. Spaces in words become hyphens. Category must be sold / liked / trend / user / spoonflower. Kind must be Style / Subject / Color / Technique / Layout / Mood / Use."
         >
           <Icon name="file" size={13} /> Import CSV
         </button>
@@ -1014,7 +1163,18 @@ function AddKeywordsBar({
           }}
         />
       </div>
-      {error && <div className="help help--error">{error}</div>}
+      <div
+        style={{
+          fontSize: 10.5,
+          color: "var(--ink-500)",
+          lineHeight: 1,
+          marginTop: -2,
+        }}
+      >
+        * use a hyphen{" "}
+        <code style={{ fontFamily: "var(--font-mono)" }}>(-)</code> to keep
+        multi-word keywords together
+      </div>
     </div>
   );
 }
@@ -1036,10 +1196,20 @@ function splitWords(input: string): string[] {
     .filter(Boolean);
 }
 
-function parseCsv(
-  text: string,
-): { word: string; category: string | null }[] {
-  const out: { word: string; category: string | null }[] = [];
+// CSV import shape (strict): word, category, kind.
+//   - word:     spaces collapse to "-", lowercased via normalizeWord
+//   - category: must match a canonical CATEGORY slug after normalize
+//   - kind:     must match a KIND (case-insensitive); stored title-case
+// Rows missing or failing any of these are dropped and counted as skipped
+// so the user gets a "imported N · skipped M invalid" summary. Dedupe is
+// first-occurrence-wins, matching addKeywords semantics.
+function parseCsv(text: string): {
+  entries: { word: string; category: string; kind: string }[];
+  skipped: number;
+} {
+  const entries: { word: string; category: string; kind: string }[] = [];
+  const seen = new Set<string>();
+  let skipped = 0;
   const lines = text.split(/\r?\n/);
   let headerSkipped = false;
   for (const raw of lines) {
@@ -1048,18 +1218,27 @@ function parseCsv(
     if (!cells[0]) continue;
     if (
       !headerSkipped &&
-      out.length === 0 &&
+      entries.length === 0 &&
       /^(word|keyword|tag|name)$/i.test(cells[0])
     ) {
       headerSkipped = true;
       continue;
     }
-    out.push({
-      word: cells[0],
-      category: cells[1]?.trim() ? cells[1].trim() : null,
-    });
+    const word = normalizeWord(cells[0] ?? "");
+    const category = normalizeCategory(cells[1] ?? "");
+    const kind = normalizeKind(cells[2] ?? "");
+    if (!word || !category || !kind) {
+      skipped++;
+      continue;
+    }
+    if (seen.has(word)) {
+      skipped++;
+      continue;
+    }
+    seen.add(word);
+    entries.push({ word, category, kind });
   }
-  return out;
+  return { entries, skipped };
 }
 
 function splitCsvLine(line: string): string[] {
@@ -1090,7 +1269,7 @@ function splitCsvLine(line: string): string[] {
   return cells;
 }
 
-function HeatLegendSwatch({ base }: { base: "Sold" | "Liked" }) {
+function HeatLegendSwatch({ base }: { base: "sold" | "liked" }) {
   const shades = HEAT_SHADES[base];
   return (
     <span
@@ -1127,9 +1306,9 @@ function Legend() {
         className="eyebrow"
         style={{ color: "var(--ink-500)" }}
       >
-        Categories
+        Sources
       </span>
-      {[...CATEGORIES, UNCATEGORIZED].map((c) => (
+      {CATEGORIES.map((c) => (
         <span
           key={c.name}
           title={c.description}
@@ -1142,7 +1321,7 @@ function Legend() {
           }}
         >
           {c.heat ? (
-            <HeatLegendSwatch base={c.name as "Sold" | "Liked"} />
+            <HeatLegendSwatch base={c.name as "sold" | "liked"} />
           ) : (
             <span
               style={{
@@ -1155,7 +1334,7 @@ function Legend() {
               }}
             />
           )}
-          {c.name}
+          {c.label}
         </span>
       ))}
     </div>

@@ -1,5 +1,24 @@
+// Canonical lowercase slugs stored in user_keywords.category. UI labels
+// live on CategoryDef.label and are looked up via categoryFor(). This
+// enum is the single source of truth — import it everywhere instead of
+// hardcoding string literals so renames stay safe.
+export const CATEGORY = {
+  SOLD: "sold",
+  LIKED: "liked",
+  TREND: "trend",
+  USER: "user",
+  SPOONFLOWER: "spoonflower",
+} as const;
+
+export type Category = (typeof CATEGORY)[keyof typeof CATEGORY];
+
 export type CategoryDef = {
-  name: string;
+  // DB value — the canonical string stored in user_keywords.category.
+  name: Category;
+  // Display label shown in the UI. Often the same as `name`, but for
+  // multi-word categories the DB stores a short slug ("user") while the
+  // UI shows the friendlier "User saved".
+  label: string;
   chipClass: string;
   description: string;
   // Chip-dot (the small swatch attached to each word pill). Matches the
@@ -16,7 +35,8 @@ export type CategoryDef = {
 
 export const CATEGORIES: CategoryDef[] = [
   {
-    name: "Sold",
+    name: CATEGORY.SOLD,
+    label: "Sold",
     chipClass: "chip--sales",
     description: "Most sold (heatmap by frequency)",
     swatch: "var(--sage-100)",
@@ -27,7 +47,8 @@ export const CATEGORIES: CategoryDef[] = [
     userSelectable: false,
   },
   {
-    name: "Liked",
+    name: CATEGORY.LIKED,
+    label: "Liked",
     chipClass: "chip--liked",
     description: "Most liked (heatmap by frequency)",
     swatch: "var(--blossom-100)",
@@ -38,7 +59,8 @@ export const CATEGORIES: CategoryDef[] = [
     userSelectable: false,
   },
   {
-    name: "Trend",
+    name: CATEGORY.TREND,
+    label: "Trend",
     chipClass: "chip--trend",
     description: "Your trend research",
     swatch: "var(--plum-100)",
@@ -49,9 +71,22 @@ export const CATEGORIES: CategoryDef[] = [
     userSelectable: true,
   },
   {
-    name: "Spoonflower",
+    name: CATEGORY.USER,
+    label: "User Saved",
+    chipClass: "",
+    description: "Saved by you — manually added or starred",
+    swatch: "var(--surface)",
+    swatchBorder: "var(--border)",
+    legendFill: "var(--surface)",
+    legendBorder: "var(--slate-300)",
+    heat: false,
+    userSelectable: true,
+  },
+  {
+    name: CATEGORY.SPOONFLOWER,
+    label: "Spoonflower Categories",
     chipClass: "chip--system",
-    description: "Saved from Spoonflower",
+    description: "Pulled from Spoonflower",
     swatch: "var(--slate-100)",
     swatchBorder: "var(--slate-300)",
     legendFill: "var(--slate-500)",
@@ -61,19 +96,42 @@ export const CATEGORIES: CategoryDef[] = [
   },
 ];
 
-export const UNCATEGORIZED: CategoryDef = {
-  name: "Uncategorized",
+// Fallback when categoryFor() is handed a value not in CATEGORIES. After
+// the normalize-slugs migration there shouldn't be any in practice — but
+// keeps the renderer safe if a new extension build ever introduces an
+// unknown value. Not in CATEGORIES, so it doesn't appear in dropdowns /
+// legend / popovers.
+export const UNCATEGORIZED = {
+  name: "uncategorized",
+  label: "Uncategorized",
   chipClass: "",
   description: "No category",
   swatch: "var(--surface)",
   swatchBorder: "var(--border)",
   legendFill: "var(--surface)",
   legendBorder: "var(--slate-300)",
-  heat: false,
-  userSelectable: true,
+  heat: false as const,
+  userSelectable: false as const,
+} satisfies Omit<CategoryDef, "name"> & { name: string };
+
+// Loose return type — UNCATEGORIZED falls outside the strict Category enum.
+export type RenderableCategory = Omit<CategoryDef, "name"> & {
+  name: string;
 };
 
-export function categoryFor(name: string | null | undefined): CategoryDef {
+// Normalize a CSV/user-supplied category cell to the canonical lowercase
+// slug. Returns null if the value doesn't map to a known category.
+export function normalizeCategory(s: string): Category | null {
+  const lower = s.trim().toLowerCase();
+  const match = (Object.values(CATEGORY) as string[]).find(
+    (c) => c === lower,
+  );
+  return (match as Category | undefined) ?? null;
+}
+
+export function categoryFor(
+  name: string | null | undefined,
+): RenderableCategory {
   if (!name) return UNCATEGORIZED;
   const lower = name.toLowerCase();
   return (
@@ -101,10 +159,10 @@ export function heatLevel(frequency: number, max: number): HeatLevel {
 // Shade scales for the two heatmap categories. 3 levels each, lightest →
 // darkest. Used to override the chip CSS variant inline when rendering.
 export const HEAT_SHADES: Record<
-  "Sold" | "Liked",
+  "sold" | "liked",
   Record<HeatLevel, { bg: string; border: string; color: string }>
 > = {
-  Sold: {
+  sold: {
     1: {
       bg: "var(--sage-100)",
       border: "var(--sage-500)",
@@ -121,7 +179,7 @@ export const HEAT_SHADES: Record<
       color: "#fff",
     },
   },
-  Liked: {
+  liked: {
     1: {
       bg: "var(--blossom-100)",
       border: "var(--blossom-300)",

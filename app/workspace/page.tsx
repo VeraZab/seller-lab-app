@@ -7,7 +7,14 @@ import {
   updateKeyword,
   recategorizeKeyword,
   addKeywords,
+  importKeywordsFromCsv,
+  classifyMissingKindsForCurrentUser,
+  setKeywordKind,
 } from "./actions";
+import {
+  UNCATEGORIZED_KIND,
+  KIND_DISPLAY_ORDER,
+} from "./kinds";
 
 export default async function WorkspacePage() {
   const supabase = await createClient();
@@ -32,14 +39,31 @@ export default async function WorkspacePage() {
     redirect("/");
   }
 
-  const { data: keywordRows } = await supabase
+  let { data: keywordRows } = await supabase
     .from("user_keywords")
-    .select("word, category, frequency")
+    .select("word, category, frequency, kind")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
+  // First-load backfill: if any rows are missing `kind` (e.g. after the
+  // schema change or from extension writes that bypass addKeywords), run
+  // one Gemini classify call inline. This makes the first view slightly
+  // slower (~2-5s) but every subsequent load is instant.
+  const hasUnclassified = (keywordRows ?? []).some(
+    (r: { kind: string | null }) => !r.kind,
+  );
+  if (hasUnclassified) {
+    await classifyMissingKindsForCurrentUser();
+    const refetched = await supabase
+      .from("user_keywords")
+      .select("word, category, frequency, kind")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+    keywordRows = refetched.data;
+  }
+
   const rows = keywordRows ?? [];
-  const buckets = groupByCharCount(rows);
+  const buckets = groupByKind(rows);
   const heatMaxByCategory = computeHeatMaxByCategory(rows);
 
   const plan = profile?.plan === "paid" ? "paid" : "free";
@@ -57,6 +81,8 @@ export default async function WorkspacePage() {
       updateKeyword={updateKeyword}
       recategorizeKeyword={recategorizeKeyword}
       addKeywords={addKeywords}
+      importKeywordsFromCsv={importKeywordsFromCsv}
+      setKeywordKind={setKeywordKind}
     />
   );
 }
@@ -65,24 +91,31 @@ type RawRow = {
   word: string;
   category: string | null;
   frequency: number | null;
+  kind: string | null;
 };
 
-function groupByCharCount(rows: RawRow[]) {
-  const map = new Map<number, RawRow[]>();
+function groupByKind(rows: RawRow[]) {
+  const map = new Map<string, RawRow[]>();
   for (const r of rows) {
-    const n = r.word.length;
-    const list = map.get(n) ?? [];
+    const key = r.kind || UNCATEGORIZED_KIND;
+    const list = map.get(key) ?? [];
     list.push(r);
-    map.set(n, list);
+    map.set(key, list);
   }
-  return Array.from(map, ([charCount, words]) => ({
-    charCount,
+  return Array.from(map, ([kind, words]) => ({
+    kind,
     words: words.map((w) => ({
       word: w.word,
       category: w.category,
       frequency: w.frequency ?? 1,
     })),
-  })).sort((a, b) => a.charCount - b.charCount);
+  })).sort((a, b) => {
+    const ra = KIND_DISPLAY_ORDER.indexOf(a.kind);
+    const rb = KIND_DISPLAY_ORDER.indexOf(b.kind);
+    const ar = ra === -1 ? KIND_DISPLAY_ORDER.length : ra;
+    const br = rb === -1 ? KIND_DISPLAY_ORDER.length : rb;
+    return ar - br;
+  });
 }
 
 function computeHeatMaxByCategory(rows: RawRow[]): Record<string, number> {

@@ -129,6 +129,21 @@
 .field-icon-wrap { position: relative; }
 .field-icon-wrap > .lucide { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--ink-500); pointer-events: none; }
 
+/* Compact select with a controlled chevron — replaces the native dropdown
+   indicator so spacing between text and chevron is consistent regardless
+   of select width. Use for inline selects (AddKeywordsBar etc.) where
+   the native chevron's wide reserved area looks sloppy on short options
+   like "Auto". */
+.select--compact {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 9px 28px 9px 12px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235A627C' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
+}
+
 .help { font-size: 12px; color: var(--ink-500); margin-top: 6px; }
 .help--error { color: var(--brick-700); }
 
