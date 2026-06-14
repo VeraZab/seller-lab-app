@@ -199,7 +199,11 @@ export async function classifyMissingKindsForCurrentUser(): Promise<{
       .eq("word", w);
     classified++;
   }
-  if (classified > 0) revalidatePath("/workspace");
+  // Intentionally no revalidatePath here — this function is called inline
+  // from the WorkspacePage server component on first load, and calling
+  // revalidatePath() during render throws in Next 15+. The page re-fetches
+  // user_keywords manually right after this returns, so fresh kinds appear
+  // on the same render without needing a cache bust.
   return { classified };
 }
 
