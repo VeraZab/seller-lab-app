@@ -13,19 +13,35 @@ export async function signOut() {
   redirect("/sign-in");
 }
 
+export type AddKeywordsResult = {
+  // How many entries the caller submitted (after normalize/dedupe).
+  received: number;
+  // Rows that didn't exist and got inserted with the caller's category/kind.
+  inserted: number;
+  // Rows that already existed. Their category + kind were updated to the
+  // caller's new values (the word text itself is unchanged since it's the
+  // conflict key). Names of the affected words so the UI can show them.
+  updatedExisting: string[];
+};
+
 export async function addKeywords(
   entries: {
     word: string;
     category: string | null;
     kind?: string | null;
   }[],
-) {
-  if (!entries.length) return;
+): Promise<AddKeywordsResult> {
+  const empty: AddKeywordsResult = {
+    received: 0,
+    inserted: 0,
+    updatedExisting: [],
+  };
+  if (!entries.length) return empty;
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return;
+  if (!user) return empty;
 
   const seen = new Set<string>();
   const cleaned = entries
@@ -47,7 +63,7 @@ export async function addKeywords(
       return true;
     });
 
-  if (!cleaned.length) return;
+  if (!cleaned.length) return empty;
 
   // Only words without an explicit kind go to the AI classifier. If the
   // user picked a kind in the dropdown it wins outright — saves a Gemini
@@ -66,13 +82,41 @@ export async function addKeywords(
     kind: r.kindOverride ?? kindMap[r.word.toLowerCase()] ?? null,
   }));
 
+  // Look up which of the incoming words already exist so we can report
+  // back "already saved — recategorized". We need this info anyway to
+  // give the user useful feedback, so we pay one extra roundtrip rather
+  // than parsing a bulk-upsert result.
+  const words = rows.map((r) => r.word);
+  const { data: existing } = await supabase
+    .from("user_keywords")
+    .select("word")
+    .eq("user_id", user.id)
+    .in("word", words);
+  const existingSet = new Set(
+    ((existing ?? []) as { word: string }[]).map((r) => r.word),
+  );
+
+  // Upsert with ignoreDuplicates: false → existing rows get their
+  // category + kind overwritten to the caller's new values, matching the
+  // user's intent when they re-add a word with a different classification.
+  // (Frequency stays at its stored value because we don't list it in the
+  // upsert columns.)
   await supabase
     .from("user_keywords")
     .upsert(rows, {
       onConflict: "user_id,word",
-      ignoreDuplicates: true,
+      ignoreDuplicates: false,
     });
   revalidatePath("/workspace");
+
+  const updatedExisting = rows
+    .map((r) => r.word)
+    .filter((w) => existingSet.has(w));
+  return {
+    received: cleaned.length,
+    inserted: cleaned.length - updatedExisting.length,
+    updatedExisting,
+  };
 }
 
 export type CsvImportResult = {

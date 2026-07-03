@@ -24,7 +24,7 @@ import {
 } from "./categories";
 import { KIND_HINTS, KINDS, UNCATEGORIZED_KIND, normalizeKind } from "./kinds";
 import { normalizeWord } from "./words";
-import type { CsvImportResult } from "./actions";
+import type { AddKeywordsResult, CsvImportResult } from "./actions";
 
 type SessionUser = {
   email: string;
@@ -61,7 +61,7 @@ type WorkspaceClientProps = {
       category: string | null;
       kind?: string | null;
     }[],
-  ) => Promise<void>;
+  ) => Promise<AddKeywordsResult>;
   importKeywordsFromCsv: (
     entries: { word: string; category: string; kind: string }[],
   ) => Promise<CsvImportResult>;
@@ -318,7 +318,7 @@ type KeywordLibraryProps = {
       category: string | null;
       kind?: string | null;
     }[],
-  ) => Promise<void>;
+  ) => Promise<AddKeywordsResult>;
   importKeywordsFromCsv: (
     entries: { word: string; category: string; kind: string }[],
   ) => Promise<CsvImportResult>;
@@ -339,6 +339,9 @@ function KeywordLibrary({
 }: KeywordLibraryProps) {
   // Single-select source filter. null = show all sources.
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  // Free-text search. Case-insensitive substring match against the word
+  // itself. Composed with the source filter (both must match).
+  const [query, setQuery] = useState("");
 
   const totalWords = buckets.reduce((sum, b) => sum + b.words.length, 0);
 
@@ -356,17 +359,21 @@ function KeywordLibrary({
   }, [buckets]);
 
   const filteredBuckets = useMemo(() => {
-    if (!activeCategory) return buckets;
-    const target = activeCategory.toLowerCase();
+    const target = activeCategory?.toLowerCase() ?? null;
+    const q = query.trim().toLowerCase();
+    if (!target && !q) return buckets;
     return buckets
       .map((b) => ({
         ...b,
-        words: b.words.filter(
-          (w) => (w.category ?? "").toLowerCase() === target,
-        ),
+        words: b.words.filter((w) => {
+          if (target && (w.category ?? "").toLowerCase() !== target)
+            return false;
+          if (q && !w.word.toLowerCase().includes(q)) return false;
+          return true;
+        }),
       }))
       .filter((b) => b.words.length > 0);
-  }, [buckets, activeCategory]);
+  }, [buckets, activeCategory, query]);
 
   const shownWords = filteredBuckets.reduce(
     (sum, b) => sum + b.words.length,
@@ -397,18 +404,32 @@ function KeywordLibrary({
           importKeywordsFromCsv={importKeywordsFromCsv}
           pushToast={pushToast}
         />
-        <Legend
-          activeCategory={activeCategory}
-          countsByCategory={countsByCategory}
-          totalCount={totalWords}
-          onSelect={setActiveCategory}
-        />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            flexWrap: "wrap",
+          }}
+        >
+          <Legend
+            activeCategory={activeCategory}
+            countsByCategory={countsByCategory}
+            totalCount={totalWords}
+            onSelect={setActiveCategory}
+          />
+          <SearchBar query={query} onChange={setQuery} />
+        </div>
         {buckets.length === 0 ? (
           <EmptyLibrary />
         ) : filteredBuckets.length === 0 ? (
           <FilterEmpty
             category={activeCategory}
-            onClear={() => setActiveCategory(null)}
+            query={query}
+            onClear={() => {
+              setActiveCategory(null);
+              setQuery("");
+            }}
           />
         ) : (
           <div
@@ -652,6 +673,7 @@ function KindBucketCard({
             onRemove={handleRemove}
             onUpdate={handleUpdate}
             onSetKind={handleSetKind}
+            onRecategorize={handleRecategorize}
             disabled={pending && busyWord === w.word}
           />
         ))}
@@ -670,6 +692,7 @@ type WordPillProps = {
   onRemove: (word: string) => void;
   onUpdate: (oldWord: string, newWord: string) => void;
   onSetKind: (word: string, kind: string | null) => void;
+  onRecategorize: (word: string, category: string | null) => void;
   disabled: boolean;
 };
 
@@ -683,6 +706,7 @@ const WordPill = memo(function WordPill({
   onRemove,
   onUpdate,
   onSetKind,
+  onRecategorize,
   disabled,
 }: WordPillProps) {
   const c = categoryFor(category);
@@ -692,7 +716,8 @@ const WordPill = memo(function WordPill({
       : null;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(word);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [kindPickerOpen, setKindPickerOpen] = useState(false);
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
 
   const commit = () => {
@@ -751,10 +776,13 @@ const WordPill = memo(function WordPill({
       <KindDot
         currentKind={currentKind}
         disabled={disabled || editing}
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
+        open={kindPickerOpen}
+        onOpenChange={(v) => {
+          setKindPickerOpen(v);
+          if (v) setSourcePickerOpen(false);
+        }}
         onPick={(k) => {
-          setPickerOpen(false);
+          setKindPickerOpen(false);
           if (k !== currentKind) onSetKind(word, k);
         }}
       />
@@ -805,6 +833,19 @@ const WordPill = memo(function WordPill({
           {word}
         </button>
       )}
+      <SourceTag
+        category={category}
+        disabled={disabled || editing}
+        open={sourcePickerOpen}
+        onOpenChange={(v) => {
+          setSourcePickerOpen(v);
+          if (v) setKindPickerOpen(false);
+        }}
+        onPick={(cat) => {
+          setSourcePickerOpen(false);
+          onRecategorize(word, cat);
+        }}
+      />
       <PillIconButton
         ariaLabel={`Remove ${word}`}
         onClick={() => onRemove(word)}
@@ -1014,6 +1055,166 @@ function KindMenu({
   );
 }
 
+// Source affordance — small tag icon on the right side of each pill,
+// tinted with the current source's identity color so users can spot
+// "this is a Trend word" without opening anything. Click to change source.
+function SourceTag({
+  category,
+  disabled,
+  open,
+  onOpenChange,
+  onPick,
+}: {
+  category: string | null;
+  disabled: boolean;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onPick: (category: string | null) => void;
+}) {
+  const c = categoryFor(category);
+  const tintColor = c.legendFill === "var(--surface)"
+    ? "var(--ink-500)"
+    : c.legendFill;
+  const rootRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) onOpenChange(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onOpenChange]);
+
+  return (
+    <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onOpenChange(!open)}
+        aria-label={`Change source (currently ${c.label})`}
+        title={`${c.label} — click to change source`}
+        style={{
+          width: 18,
+          height: 18,
+          padding: 0,
+          border: "none",
+          background: open ? "rgba(20,24,42,0.08)" : "transparent",
+          borderRadius: 4,
+          cursor: disabled ? "default" : "pointer",
+          color: tintColor,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition:
+            "background 120ms ease-out, transform 120ms ease-out",
+        }}
+        onMouseEnter={(e) => {
+          if (disabled) return;
+          e.currentTarget.style.transform = "scale(1.12)";
+          if (!open)
+            e.currentTarget.style.background = "rgba(20,24,42,0.06)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = "scale(1)";
+          if (!open) e.currentTarget.style.background = "transparent";
+        }}
+      >
+        <Icon name="tag" size={12} />
+      </button>
+      {open && <SourceMenu current={c.name} onPick={onPick} />}
+    </span>
+  );
+}
+
+function SourceMenu({
+  current,
+  onPick,
+}: {
+  current: string;
+  onPick: (category: string | null) => void;
+}) {
+  return (
+    <div
+      role="menu"
+      style={{
+        position: "absolute",
+        top: "calc(100% + 6px)",
+        right: -4,
+        zIndex: 20,
+        minWidth: 180,
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-md)",
+        boxShadow: "var(--shadow-md)",
+        padding: "var(--space-1)",
+        fontFamily: "var(--font-body)",
+      }}
+    >
+      {CATEGORIES.filter((opt) => opt.userSelectable).map((opt) => {
+        const isCurrent = opt.name === current;
+        return (
+          <button
+            key={opt.name}
+            role="menuitem"
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onPick(opt.name);
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "6px 8px",
+              fontSize: 12.5,
+              color: "var(--ink-900)",
+              background: isCurrent ? "var(--parchment-100)" : "transparent",
+              border: "none",
+              borderRadius: "var(--radius-sm)",
+              cursor: "pointer",
+              textAlign: "left",
+              fontWeight: isCurrent ? 600 : 500,
+              transition: "background 100ms ease-out",
+            }}
+            onMouseEnter={(e) => {
+              if (!isCurrent)
+                e.currentTarget.style.background = "var(--parchment-50)";
+            }}
+            onMouseLeave={(e) => {
+              if (!isCurrent)
+                e.currentTarget.style.background = "transparent";
+            }}
+          >
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                background: opt.legendFill,
+                border: `1.5px solid ${opt.legendBorder}`,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ flex: 1 }}>{opt.label}</span>
+            {isCurrent && (
+              <Icon name="check" size={12} color="var(--ink-500)" />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function AddKeywordsBar({
   addKeywords,
   importKeywordsFromCsv,
@@ -1025,7 +1226,7 @@ function AddKeywordsBar({
       category: string | null;
       kind?: string | null;
     }[],
-  ) => Promise<void>;
+  ) => Promise<AddKeywordsResult>;
   importKeywordsFromCsv: (
     entries: { word: string; category: string; kind: string }[],
   ) => Promise<CsvImportResult>;
@@ -1047,10 +1248,29 @@ function AddKeywordsBar({
     const cat = category || null;
     const k = kind || null;
     startTransition(async () => {
-      await addKeywords(
+      const result = await addKeywords(
         words.map((w) => ({ word: w, category: cat, kind: k })),
       );
       setValue("");
+      const { inserted, updatedExisting } = result;
+      if (updatedExisting.length > 0) {
+        const shown = updatedExisting.slice(0, 3).join(", ");
+        const rest =
+          updatedExisting.length > 3
+            ? ` and ${updatedExisting.length - 3} more`
+            : "";
+        const insertedPart =
+          inserted > 0 ? ` · Added ${inserted} new` : "";
+        pushToast({
+          kind: "info",
+          message: `Already in your library: ${shown}${rest} — recategorized to your selection.${insertedPart}`,
+        });
+      } else if (inserted > 0) {
+        pushToast({
+          kind: "success",
+          message: `Added ${inserted} keyword${inserted === 1 ? "" : "s"}.`,
+        });
+      }
     });
   };
 
@@ -1326,6 +1546,58 @@ function HeatLegendSwatch({ base }: { base: "sold" | "liked" }) {
   );
 }
 
+function SearchBar({
+  query,
+  onChange,
+}: {
+  query: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div
+      className="field-icon-wrap"
+      style={{
+        position: "relative",
+        flex: "1 1 220px",
+        minWidth: 220,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
+          color: "var(--ink-500)",
+          display: "inline-flex",
+          pointerEvents: "none",
+        }}
+      >
+        <Icon name="search" size={13} />
+      </span>
+      <input
+        className="input input--with-icon"
+        type="search"
+        placeholder="Search"
+        value={query}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && query) {
+            e.preventDefault();
+            onChange("");
+          }
+        }}
+        aria-label="Search keywords"
+        style={{
+          fontSize: 12.5,
+          padding: "7px 10px 7px 30px",
+        }}
+      />
+    </div>
+  );
+}
+
 function Legend({
   activeCategory,
   countsByCategory,
@@ -1487,12 +1759,16 @@ function LegendChip({
 
 function FilterEmpty({
   category,
+  query,
   onClear,
 }: {
   category: string | null;
+  query: string;
   onClear: () => void;
 }) {
   const label = categoryFor(category).label;
+  const hasQuery = query.trim().length > 0;
+  const hasCategory = !!category;
   return (
     <div
       className="s-card s-card--tinted"
@@ -1506,7 +1782,11 @@ function FilterEmpty({
         textAlign: "center",
       }}
     >
-      <Icon name="star" size={28} color="var(--ink-300)" />
+      <Icon
+        name={hasQuery ? "search" : "star"}
+        size={28}
+        color="var(--ink-300)"
+      />
       <p
         style={{
           color: "var(--ink-700)",
@@ -1514,10 +1794,23 @@ function FilterEmpty({
           margin: 0,
         }}
       >
-        No words in <strong>{label}</strong> yet.
+        {hasQuery && hasCategory ? (
+          <>
+            No matches for &ldquo;<strong>{query.trim()}</strong>&rdquo; in{" "}
+            <strong>{label}</strong>.
+          </>
+        ) : hasQuery ? (
+          <>
+            No matches for &ldquo;<strong>{query.trim()}</strong>&rdquo;.
+          </>
+        ) : (
+          <>
+            No words in <strong>{label}</strong> yet.
+          </>
+        )}
       </p>
       <button type="button" className="btn btn--ghost btn--sm" onClick={onClear}>
-        Show all sources
+        Clear filters
       </button>
     </div>
   );
