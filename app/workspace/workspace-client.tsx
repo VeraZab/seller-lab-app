@@ -514,6 +514,17 @@ function KindBucketCard({
     [recategorizeKeyword],
   );
 
+  const handleSetKind = useCallback(
+    (word: string, kind: string | null) => {
+      setBusyWord(word);
+      startTransition(async () => {
+        await setKeywordKind(word, kind);
+        setBusyWord(null);
+      });
+    },
+    [setKeywordKind],
+  );
+
   const sortedWords = useMemo(
     () => sortBucketWords(bucket.words),
     [bucket.words],
@@ -637,9 +648,10 @@ function KindBucketCard({
               w.category ? (heatMaxByCategory[w.category] ?? 1) : 1
             }
             sourceKind={bucket.kind}
+            currentKind={bucket.kind}
             onRemove={handleRemove}
             onUpdate={handleUpdate}
-            onRecategorize={handleRecategorize}
+            onSetKind={handleSetKind}
             disabled={pending && busyWord === w.word}
           />
         ))}
@@ -654,9 +666,10 @@ type WordPillProps = {
   frequency: number;
   heatMax: number;
   sourceKind: string;
+  currentKind: string;
   onRemove: (word: string) => void;
   onUpdate: (oldWord: string, newWord: string) => void;
-  onRecategorize: (word: string, category: string | null) => void;
+  onSetKind: (word: string, kind: string | null) => void;
   disabled: boolean;
 };
 
@@ -666,9 +679,10 @@ const WordPill = memo(function WordPill({
   frequency,
   heatMax,
   sourceKind,
+  currentKind,
   onRemove,
   onUpdate,
-  onRecategorize,
+  onSetKind,
   disabled,
 }: WordPillProps) {
   const c = categoryFor(category);
@@ -734,16 +748,14 @@ const WordPill = memo(function WordPill({
           : null),
       }}
     >
-      <CategoryDot
-        category={category}
-        frequency={frequency}
-        heatMax={heatMax}
+      <KindDot
+        currentKind={currentKind}
         disabled={disabled || editing}
         open={pickerOpen}
         onOpenChange={setPickerOpen}
-        onPick={(cat) => {
+        onPick={(k) => {
           setPickerOpen(false);
-          onRecategorize(word, cat);
+          if (k !== currentKind) onSetKind(word, k);
         }}
       />
       {editing ? (
@@ -851,30 +863,23 @@ function PillIconButton({
   );
 }
 
-function CategoryDot({
-  category,
-  frequency,
-  heatMax,
+// Circle affordance on each pill for reassigning it to a different Kind
+// bucket. Neutral visual (slate hairline dot) because Kind has no color
+// system — chip background carries source color; this is a "move me"
+// control. Opens a picker menu listing all canonical KINDS.
+function KindDot({
+  currentKind,
   disabled,
   open,
   onOpenChange,
   onPick,
 }: {
-  category: string | null;
-  frequency: number;
-  heatMax: number;
+  currentKind: string;
   disabled: boolean;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onPick: (category: string | null) => void;
+  onPick: (kind: string) => void;
 }) {
-  const c = categoryFor(category);
-  const heatShade =
-    c.heat && (c.name === CATEGORY.SOLD || c.name === CATEGORY.LIKED)
-      ? HEAT_SHADES[c.name][heatLevel(frequency, heatMax)]
-      : null;
-  const dotBg = heatShade?.bg ?? c.swatch;
-  const dotBorder = heatShade?.border ?? c.swatchBorder;
   const rootRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -899,45 +904,52 @@ function CategoryDot({
         type="button"
         disabled={disabled}
         onClick={() => onOpenChange(!open)}
-        aria-label={`Change category (currently ${c.label})`}
-        title={`${c.label} — click to recategorize`}
+        aria-label={`Move to a different bucket (currently ${currentKind})`}
+        title={`${currentKind} — click to move`}
         style={{
-          width: 16,
-          height: 16,
+          width: 18,
+          height: 18,
           padding: 0,
-          border: `1.5px solid ${dotBorder}`,
-          background: dotBg,
-          borderRadius: 999,
+          border: "none",
+          background: open ? "rgba(20,24,42,0.08)" : "transparent",
+          borderRadius: 4,
           cursor: disabled ? "default" : "pointer",
-          boxShadow: open ? "0 0 0 2px rgba(20,24,42,0.12)" : "none",
-          transition: "box-shadow 120ms ease-out, transform 120ms ease-out",
+          color: "var(--ink-500)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition:
+            "background 120ms ease-out, color 120ms ease-out, transform 120ms ease-out",
         }}
         onMouseEnter={(e) => {
           if (disabled) return;
           e.currentTarget.style.transform = "scale(1.12)";
+          e.currentTarget.style.color = "var(--ink-900)";
+          if (!open)
+            e.currentTarget.style.background = "rgba(20,24,42,0.06)";
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.transform = "scale(1)";
+          e.currentTarget.style.color = "var(--ink-500)";
+          if (!open) e.currentTarget.style.background = "transparent";
         }}
-      />
+      >
+        <Icon name="folder" size={12} />
+      </button>
       {open && (
-        <CategoryMenu
-          current={c.name}
-          onPick={onPick}
-        />
+        <KindMenu current={currentKind} onPick={onPick} />
       )}
     </span>
   );
 }
 
-function CategoryMenu({
+function KindMenu({
   current,
   onPick,
 }: {
   current: string;
-  onPick: (category: string | null) => void;
+  onPick: (kind: string) => void;
 }) {
-  const options = CATEGORIES;
   return (
     <div
       role="menu"
@@ -955,17 +967,16 @@ function CategoryMenu({
         fontFamily: "var(--font-body)",
       }}
     >
-      {options.map((opt) => {
-        const isCurrent = opt.name === current;
-        const value = opt.name;
+      {KINDS.map((k) => {
+        const isCurrent = k === current;
         return (
           <button
-            key={opt.name}
+            key={k}
             role="menuitem"
             type="button"
             onMouseDown={(e) => {
               e.preventDefault();
-              onPick(value);
+              onPick(k);
             }}
             style={{
               display: "flex",
@@ -992,17 +1003,7 @@ function CategoryMenu({
                 e.currentTarget.style.background = "transparent";
             }}
           >
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 3,
-                background: opt.swatch,
-                border: `1.5px solid ${opt.swatchBorder}`,
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ flex: 1 }}>{opt.label}</span>
+            <span style={{ flex: 1 }}>{k}</span>
             {isCurrent && (
               <Icon name="check" size={12} color="var(--ink-500)" />
             )}
