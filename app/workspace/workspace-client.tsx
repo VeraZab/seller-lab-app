@@ -10,6 +10,7 @@ import {
   useTransition,
 } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { BrandLockup } from "@/components/brand";
 import { Icon } from "@/components/icon";
 import { ToastViewport, useToasts, type Toast } from "@/components/toast";
@@ -66,6 +67,8 @@ type WorkspaceClientProps = {
     entries: { word: string; category: string; kind: string }[],
   ) => Promise<CsvImportResult>;
   setKeywordKind: (word: string, kind: string | null) => Promise<void>;
+  hasUnclassified: boolean;
+  classifyMissingKinds: () => Promise<{ classified: number }>;
 };
 
 // ---------------- Page ----------------
@@ -81,6 +84,8 @@ export default function WorkspaceClient({
   addKeywords,
   importKeywordsFromCsv,
   setKeywordKind,
+  hasUnclassified,
+  classifyMissingKinds,
 }: WorkspaceClientProps) {
   const router = useRouter();
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
@@ -89,6 +94,25 @@ export default function WorkspaceClient({
     const id = setInterval(() => router.refresh(), 30_000);
     return () => clearInterval(id);
   }, [router]);
+
+  // Background kind classification. When the server sees rows with
+  // kind=null, it sets hasUnclassified so we can fire the Gemini
+  // classifier after mount instead of during render. Guarded by a ref so
+  // we don't re-fire if this component remounts before the refresh
+  // completes.
+  const classifyFired = useRef(false);
+  useEffect(() => {
+    if (!hasUnclassified || classifyFired.current) return;
+    classifyFired.current = true;
+    (async () => {
+      try {
+        const res = await classifyMissingKinds();
+        if (res.classified > 0) router.refresh();
+      } catch (e) {
+        console.error("[workspace] background classify failed", e);
+      }
+    })();
+  }, [hasUnclassified, classifyMissingKinds, router]);
 
   return (
     <div
@@ -139,7 +163,27 @@ type SidebarProps = {
 function Sidebar({ user, signOut }: SidebarProps) {
   const [isSigningOut, startSignOut] = useTransition();
   const items = [
-    { id: "keyword-library", label: "Keyword Library", icon: "star" as const },
+    {
+      id: "keyword-library",
+      label: "Keyword Library",
+      icon: "star" as const,
+      href: "/workspace",
+      active: true,
+    },
+    {
+      id: "analytics",
+      label: "Sales & Analytics",
+      icon: "trend-up" as const,
+      href: "/analytics",
+      active: false,
+    },
+    {
+      id: "customers",
+      label: "Customers",
+      icon: "history" as const,
+      href: "/customers",
+      active: false,
+    },
   ];
   return (
     <aside
@@ -173,8 +217,10 @@ function Sidebar({ user, signOut }: SidebarProps) {
           Workspace
         </div>
         {items.map((it) => (
-          <div
+          <Link
             key={it.id}
+            href={it.href}
+            prefetch
             style={{
               display: "flex",
               alignItems: "center",
@@ -182,18 +228,21 @@ function Sidebar({ user, signOut }: SidebarProps) {
               padding: "8px 10px",
               fontFamily: "var(--font-body)",
               fontSize: 13.5,
-              fontWeight: 600,
-              color: "var(--ink-900)",
-              background: "#fff",
-              border: "1px solid var(--border)",
+              fontWeight: it.active ? 600 : 500,
+              color: it.active ? "var(--ink-900)" : "var(--ink-700)",
+              background: it.active ? "#fff" : "transparent",
+              border: it.active
+                ? "1px solid var(--border)"
+                : "1px solid transparent",
               borderRadius: 8,
               width: "100%",
-              boxShadow: "var(--shadow-xs)",
+              boxShadow: it.active ? "var(--shadow-xs)" : "none",
+              textDecoration: "none",
             }}
           >
             <Icon name={it.icon} size={15} />
             <span style={{ flex: 1, textAlign: "left" }}>{it.label}</span>
-          </div>
+          </Link>
         ))}
       </nav>
 

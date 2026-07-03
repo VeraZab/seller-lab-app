@@ -80,6 +80,9 @@ export async function addKeywords(
     word: r.word,
     category: r.category,
     kind: r.kindOverride ?? kindMap[r.word.toLowerCase()] ?? null,
+    // Any explicit user add un-hides a previously-soft-deleted row so
+    // re-adding a word they'd removed brings it back into view.
+    hidden: false,
   }));
 
   // Look up which of the incoming words already exist so we can report
@@ -312,9 +315,12 @@ export async function removeKeyword(word: string) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return;
+  // Soft-delete via hidden=true instead of DELETE so that the sold-token
+  // harvest on workspace load doesn't silently re-insert the row on the
+  // next reload. Re-adding the word via addKeywords un-hides it.
   await supabase
     .from("user_keywords")
-    .delete()
+    .update({ hidden: true })
     .eq("user_id", user.id)
     .eq("word", word);
   revalidatePath("/workspace");
