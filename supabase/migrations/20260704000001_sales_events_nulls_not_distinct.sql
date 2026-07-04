@@ -17,15 +17,23 @@
 -- Regression guard: sales rows (where design_id and customer are
 -- populated) were already deduping correctly and stay unaffected.
 
--- Step 1: delete duplicates, keeping the earliest inserted row per
--- cluster. GROUP BY treats NULLs as equal, so this correctly collapses
--- the debit/adjustment duplicates that slipped past the old constraint.
-delete from public.sales_events se
-where se.id not in (
-  select min(id)
+-- Step 1: delete duplicates, keeping exactly one row per cluster.
+-- ROW_NUMBER() partitions treat NULLs as equal (unlike unique
+-- constraints), so this collapses the debit/adjustment/payout dupes
+-- that slipped past the old NULLS DISTINCT constraint. Any row within
+-- a cluster represents the same event, so ORDER BY id (uuid) just
+-- picks a deterministic winner.
+with ranked as (
+  select id,
+         row_number() over (
+           partition by user_id, sold_at, design_id, customer, amount, size, balance
+           order by id
+         ) as rn
   from public.sales_events
-  group by user_id, sold_at, design_id, customer, amount, size, balance
-);
+)
+delete from public.sales_events se
+using ranked r
+where se.id = r.id and r.rn > 1;
 
 -- Step 2: drop the old NULLS DISTINCT constraint.
 alter table public.sales_events
