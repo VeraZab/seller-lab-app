@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BrandLockup } from "@/components/brand";
@@ -12,29 +13,41 @@ import {
 } from "@/components/toast";
 import { parseSalesCsv } from "./parse-csv";
 import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
-import type { ParsedSaleRow, UploadSalesResult } from "./actions";
+import type {
+  ParsedSaleRow,
+  SaleConflict,
+  UploadSalesResult,
+} from "./actions";
 import type { DesignHistoryRow } from "./page";
 import type {
   BucketAgg,
   ConversionStats,
   CustomerAgg,
   DailyPoint,
-  DayHourHeatmap,
+  HeatmapEvent,
   DesignAgg,
+  DesignMonthlySeries,
   Headline,
+  KeywordMonthlySeries,
+  MyPurchasesSummary,
+  YearlySeries,
 } from "./stats";
 
 type Stats = {
   headline: Headline;
+  myPurchases: MyPurchasesSummary;
   daily: DailyPoint[];
+  yearly: YearlySeries[];
   topDesigns: DesignAgg[];
+  topDesignsMonthly: { series: DesignMonthlySeries[]; months: string[] };
+  topKeywordsMonthly: { series: KeywordMonthlySeries[]; months: string[] };
   mostRefunded: DesignAgg[];
   substrate: BucketAgg[];
   size: BucketAgg[];
   productCategory: BucketAgg[];
   customers: CustomerAgg[];
   conversion: ConversionStats;
-  heatmap: DayHourHeatmap;
+  heatmapEvents: HeatmapEvent[];
 };
 
 type SessionUser = {
@@ -42,6 +55,12 @@ type SessionUser = {
   displayName: string;
   initial: string;
   plan: "free" | "paid";
+};
+
+export type SyncSummary = {
+  earliestSaleAt: string | null;
+  latestSaleAt: string | null;
+  totalSaleEvents: number;
 };
 
 export default function AnalyticsClient({
@@ -52,6 +71,7 @@ export default function AnalyticsClient({
   uncachedDesignIds,
   storageUrlBase,
   historyByDesign,
+  syncSummary,
 }: {
   user: SessionUser;
   stats: Stats | null;
@@ -60,6 +80,7 @@ export default function AnalyticsClient({
   uncachedDesignIds: number[];
   storageUrlBase: string;
   historyByDesign: Record<string, DesignHistoryRow[]>;
+  syncSummary: SyncSummary;
 }) {
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
   const [locallyCached, setLocallyCached] = useState<Set<number>>(
@@ -178,6 +199,7 @@ export default function AnalyticsClient({
           totalDesignsWithImages={cachedDesignIds.length + uncachedDesignIds.length}
           storageUrlBase={storageUrlBase}
           historyByDesign={historyByDesign}
+          syncSummary={syncSummary}
         />
       </div>
       <ToastViewport toasts={toasts} onDismiss={dismissToast} />
@@ -324,6 +346,7 @@ function AnalyticsBody({
   totalDesignsWithImages,
   storageUrlBase,
   historyByDesign,
+  syncSummary,
 }: {
   stats: Stats | null;
   uploadSales: (rows: ParsedSaleRow[]) => Promise<UploadSalesResult>;
@@ -332,10 +355,12 @@ function AnalyticsBody({
   totalDesignsWithImages: number;
   storageUrlBase: string;
   historyByDesign: Record<string, DesignHistoryRow[]>;
+  syncSummary: SyncSummary;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [selectedDesignId, setSelectedDesignId] = useState<number | null>(null);
+  const [conflicts, setConflicts] = useState<SaleConflict[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (file: File) => {
@@ -362,6 +387,13 @@ function AnalyticsBody({
       }
       startTransition(async () => {
         const result = await uploadSales(rows);
+        setConflicts(result.conflicts);
+        if (result.conflicts.length > 0) {
+          console.warn(
+            `[analytics/upload] ${result.conflicts.length} rows in CSV differ from existing sales_events on amount/size/qty:`,
+            result.conflicts,
+          );
+        }
         // Explicit breakdown so the user knows exactly what happened.
         // If nothing shows up in the charts they can look at these
         // numbers to figure out where rows went.
@@ -369,6 +401,8 @@ function AnalyticsBody({
         if (result.inserted > 0) parts.push(`${result.inserted} new`);
         if (result.duplicatesSkipped > 0)
           parts.push(`${result.duplicatesSkipped} already saved`);
+        if (result.conflicts.length > 0)
+          parts.push(`${result.conflicts.length} corrected on Spoonflower`);
         if (skipped > 0) parts.push(`${skipped} unparseable`);
         if (result.errors.length)
           parts.push(`${result.errors.length} DB errors`);
@@ -422,6 +456,7 @@ function AnalyticsBody({
           <CacheStatusBadge
             cached={cachedSet.size}
             total={totalDesignsWithImages}
+            syncSummary={syncSummary}
           />
         )}
         <input
@@ -435,10 +470,30 @@ function AnalyticsBody({
             e.target.value = "";
           }}
         />
+        {conflicts.length > 0 && (
+          <ConflictsBanner
+            conflicts={conflicts}
+            onDismiss={() => setConflicts([])}
+          />
+        )}
         {stats ? (
           <>
-            <HeadlineCards h={stats.headline} conversion={stats.conversion} />
-            <DailyChart daily={stats.daily} />
+            <HeadlineCards
+              h={stats.headline}
+              conversion={stats.conversion}
+              myPurchases={stats.myPurchases}
+            />
+            <YearOverYearChart yearly={stats.yearly} />
+            <Top10KeywordsChart
+              series={stats.topKeywordsMonthly.series}
+              months={stats.topKeywordsMonthly.months}
+            />
+            <Top10DesignsChart
+              series={stats.topDesignsMonthly.series}
+              months={stats.topDesignsMonthly.months}
+              cachedSet={cachedSet}
+              storageUrlBase={storageUrlBase}
+            />
             <TopDesigns
               designs={stats.topDesigns}
               cachedSet={cachedSet}
@@ -464,7 +519,7 @@ function AnalyticsBody({
               cachedSet={cachedSet}
               storageUrlBase={storageUrlBase}
             />
-            <DayHourHeatmapCard heatmap={stats.heatmap} />
+            <DayHourHeatmapCard events={stats.heatmapEvents} />
           </>
         ) : (
           <EmptyState onUpload={() => fileRef.current?.click()} pending={pending} />
@@ -832,12 +887,17 @@ function CustomerLink({ customer }: { customer: string }) {
 function CacheStatusBadge({
   cached,
   total,
+  syncSummary,
 }: {
   cached: number;
   total: number;
+  syncSummary: SyncSummary;
 }) {
-  const pct = total > 0 ? Math.round((cached / total) * 100) : 0;
   const done = cached >= total;
+  const range = formatSyncRange(
+    syncSummary.earliestSaleAt,
+    syncSummary.latestSaleAt,
+  );
   return (
     <div
       style={{
@@ -867,17 +927,159 @@ function CacheStatusBadge({
         50% { opacity: 0.35; }
       }`}</style>
       <span>
-        Design images:{" "}
+        Synced{" "}
         <strong style={{ color: "var(--ink-900)" }}>
-          {cached} / {total}
+          {syncSummary.totalSaleEvents.toLocaleString("en-US")}
         </strong>{" "}
-        ready ({pct}%)
+        sale{syncSummary.totalSaleEvents === 1 ? "" : "s"}
+        {range && (
+          <>
+            {" "}
+            from{" "}
+            <strong style={{ color: "var(--ink-900)" }}>{range}</strong>
+          </>
+        )}
+        {" · "}
+        <strong style={{ color: "var(--ink-900)" }}>{total}</strong> design
+        {total === 1 ? "" : "s"}
+        {done ? (
+          <>
+            {" · "}
+            <strong style={{ color: "var(--ink-900)" }}>thumbnails ready</strong>
+          </>
+        ) : (
+          <>
+            {" · "}
+            <strong style={{ color: "var(--ink-900)" }}>
+              {cached} / {total} thumbnails
+            </strong>{" "}
+            cached
+          </>
+        )}
       </span>
       <span style={{ marginLeft: "auto", color: "var(--ink-500)", fontSize: 11 }}>
         {done
-          ? "All caught up"
-          : "Still loading — this happens once, then they’re yours"}
+          ? "All caught up — upload a fresh CSV to add more"
+          : "Still fetching thumbnails from Spoonflower"}
       </span>
+    </div>
+  );
+}
+
+// Format the sale-range covered by the events synced to our DB. Shows
+// month-precision when the range spans multiple months (typical), or a
+// single-month label if all data lives in one month.
+function formatSyncRange(
+  earliestIso: string | null,
+  latestIso: string | null,
+): string | null {
+  if (!earliestIso || !latestIso) return null;
+  const a = new Date(earliestIso);
+  const b = new Date(latestIso);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+  const fmt = (d: Date) =>
+    `${MONTH_LABELS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  const start = fmt(a);
+  const end = fmt(b);
+  return start === end ? start : `${start} – ${end}`;
+}
+
+function ConflictsBanner({
+  conflicts,
+  onDismiss,
+}: {
+  conflicts: SaleConflict[];
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        border: "1px solid var(--saffron-400, #d9a441)",
+        borderLeft: "3px solid var(--saffron-500, #b8863a)",
+        borderRadius: 8,
+        background: "var(--saffron-50, #fdf6e9)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <strong style={{ color: "var(--ink-900)", fontSize: 13 }}>
+          {conflicts.length} sale
+          {conflicts.length === 1 ? "" : "s"} may have been corrected on
+          Spoonflower
+        </strong>
+        <span style={{ color: "var(--ink-500)", fontSize: 12 }}>
+          Same date + design + customer, different amount or size in this CSV
+          vs. what&rsquo;s already saved. Nothing was changed — the existing
+          rows are still counted. Delete + re-upload if you want to accept the
+          new values.
+        </span>
+        <button
+          type="button"
+          onClick={onDismiss}
+          style={{
+            marginLeft: "auto",
+            background: "transparent",
+            border: "none",
+            color: "var(--ink-600)",
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+      <div
+        style={{
+          maxHeight: 220,
+          overflowY: "auto",
+          borderTop: "1px solid var(--saffron-200, #eadcb5)",
+          paddingTop: 8,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+        }}
+      >
+        {conflicts.slice(0, 50).map((c, i) => (
+          <ConflictRow key={i} c={c} />
+        ))}
+        {conflicts.length > 50 && (
+          <span style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4 }}>
+            + {conflicts.length - 50} more (see browser console for full list)
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConflictRow({ c }: { c: SaleConflict }) {
+  const date = c.sold_at.slice(0, 10);
+  const who = c.customer && c.customer.trim() ? c.customer : "guest";
+  const label = c.design_title ?? (c.design_id ? `#${c.design_id}` : "unknown");
+  const diffs: string[] = [];
+  if (Math.abs(c.existing.amount - c.incoming.amount) > 0.005) {
+    diffs.push(
+      `$${c.existing.amount.toFixed(2)} → $${c.incoming.amount.toFixed(2)}`,
+    );
+  }
+  if ((c.existing.size ?? "") !== (c.incoming.size ?? "")) {
+    diffs.push(`${c.existing.size ?? "—"} → ${c.incoming.size ?? "—"}`);
+  }
+  if (c.existing.qty !== c.incoming.qty) {
+    diffs.push(`qty ${c.existing.qty} → ${c.incoming.qty}`);
+  }
+  return (
+    <div style={{ fontSize: 12, color: "var(--ink-700)" }}>
+      <span style={{ color: "var(--ink-500)" }}>{date}</span>
+      {" · "}
+      <span style={{ color: "var(--ink-900)" }}>{label}</span>
+      {" · "}
+      <span style={{ color: "var(--ink-500)" }}>{who}</span>
+      {" — "}
+      <span>{diffs.join("; ")}</span>
     </div>
   );
 }
@@ -986,9 +1188,11 @@ function EmptyState({
 function HeadlineCards({
   h,
   conversion,
+  myPurchases,
 }: {
   h: Headline;
   conversion: ConversionStats;
+  myPurchases: MyPurchasesSummary;
 }) {
   const cards = [
     {
@@ -1022,6 +1226,14 @@ function HeadlineCards({
         conversion.sampleCount > 0
           ? `${conversion.convertedCount} of ${conversion.sampleCount} swatches converted`
           : "no swatch purchases yet",
+    },
+    {
+      label: "My purchases",
+      value: money(myPurchases.total),
+      sub:
+        myPurchases.count > 0
+          ? `${myPurchases.count} order${myPurchases.count === 1 ? "" : "s"} · not counted in revenue`
+          : "no personal orders yet",
     },
   ];
   return (
@@ -1073,16 +1285,6 @@ function HeadlineCards({
   );
 }
 
-type TimeframeOption = { key: "30d" | "90d" | "6mo" | "1y" | "all"; label: string; days: number | null };
-
-const TIMEFRAMES: TimeframeOption[] = [
-  { key: "30d", label: "30 days", days: 30 },
-  { key: "90d", label: "90 days", days: 90 },
-  { key: "6mo", label: "6 months", days: 183 },
-  { key: "1y", label: "1 year", days: 365 },
-  { key: "all", label: "All time", days: null },
-];
-
 type ChartMode = "revenue" | "quantity";
 
 const MODE_META: Record<
@@ -1090,93 +1292,232 @@ const MODE_META: Record<
   { label: string; short: string; format: (v: number) => string }
 > = {
   revenue: {
-    label: "Net revenue per day",
+    label: "Net revenue by month",
     short: "$",
-    format: (v) => money(v),
+    format: (v) => moneyCompact(v),
   },
   quantity: {
-    label: "Quantity per day",
-    short: "quantity",
-    format: (v) => v.toLocaleString("en-US"),
+    label: "Quantity by month",
+    short: "qty",
+    format: (v) => compactNumber(v),
   },
 };
 
-function DailyChart({ daily }: { daily: DailyPoint[] }) {
+// Palette for year-over-year lines. Cycles through the design system's
+// identity colors so each year is instantly distinguishable.
+// Shared controls used across every year-over-year style chart. Renders
+// the mode toggle ($/qty) and per-year isolation buttons with the same
+// look as the top-level Net-revenue-by-month chart.
+function ChartControls({
+  mode,
+  setMode,
+  years,
+  isolatedYear,
+  setIsolatedYear,
+}: {
+  mode: ChartMode;
+  setMode: (m: ChartMode) => void;
+  years: number[];
+  isolatedYear: number | null;
+  setIsolatedYear: (y: number | null) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 6,
+        alignItems: "center",
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ display: "flex", gap: 4 }}>
+        {(Object.keys(MODE_META) as ChartMode[]).map((m) => (
+          <button
+            key={m}
+            type="button"
+            className={`btn btn--xs ${mode === m ? "" : "btn--ghost"}`}
+            onClick={() => setMode(m)}
+          >
+            {MODE_META[m].short}
+          </button>
+        ))}
+      </div>
+      {years.length > 0 && (
+        <>
+          <span
+            aria-hidden
+            style={{
+              width: 1,
+              height: 16,
+              background: "var(--parchment-200)",
+              margin: "0 2px",
+            }}
+          />
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              type="button"
+              className={`btn btn--xs ${isolatedYear == null ? "" : "btn--ghost"}`}
+              onClick={() => setIsolatedYear(null)}
+            >
+              All years
+            </button>
+            {years.map((y, i) => (
+              <button
+                key={y}
+                type="button"
+                className={`btn btn--xs ${isolatedYear === y ? "" : "btn--ghost"}`}
+                onClick={() =>
+                  setIsolatedYear(isolatedYear === y ? null : y)
+                }
+                style={{
+                  borderColor:
+                    isolatedYear == null || isolatedYear === y
+                      ? YEAR_COLORS[i % YEAR_COLORS.length]
+                      : undefined,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: YEAR_COLORS[i % YEAR_COLORS.length],
+                    marginRight: 6,
+                  }}
+                />
+                {String(y).replace(/^20/, "'")}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const YEAR_COLORS = [
+  "var(--sage-700)",
+  "var(--saffron-700)",
+  "var(--blossom-500)",
+  "var(--plum-500)",
+  "var(--slate-500)",
+  "var(--brick-500)",
+];
+
+const MONTH_LABELS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+// Year-over-year monthly chart. One line per year, months on the X axis.
+// Buttons toggle which year is "isolated" (highlighted, others dimmed).
+// Y-axis auto-scales with nice round tick values.
+function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
   const [mode, setMode] = useState<ChartMode>("revenue");
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  // Default to 30 days, but fall back to "all" if we have fewer than 30
-  // days of data — otherwise the chart looks broken (huge visible range,
-  // one data point at the far right).
-  const [timeframe, setTimeframe] = useState<TimeframeOption["key"]>(
-    daily.length >= 30 ? "30d" : "all",
+  const [isolatedYear, setIsolatedYear] = useState<number | null>(null);
+  const [hover, setHover] = useState<{ year: number; month: number } | null>(
+    null,
   );
 
-  const visibleDaily = useMemo(() => {
-    const tf = TIMEFRAMES.find((t) => t.key === timeframe) ?? TIMEFRAMES[0];
-    if (!tf.days) return daily;
-    return daily.slice(-tf.days);
-  }, [daily, timeframe]);
-
   const width = 1080;
-  const height = 200;
-  const paddingLeft = 40;
+  const height = 240;
+  const paddingLeft = 60;
   const paddingRight = 20;
-  const paddingTop = 20;
-  const paddingBottom = 30;
+  const paddingTop = 24;
+  const paddingBottom = 36;
   const innerW = width - paddingLeft - paddingRight;
   const innerH = height - paddingTop - paddingBottom;
 
-  const { points, maxVal } = useMemo(() => {
-    const values = visibleDaily.map((d) =>
-      mode === "quantity" ? d.qty : d.net,
-    );
-    const max = Math.max(1, ...values);
-    const step = visibleDaily.length > 1 ? innerW / (visibleDaily.length - 1) : 0;
-    const points = visibleDaily.map((_, i) => ({
-      x: paddingLeft + i * step,
-      y: paddingTop + innerH - (values[i] / max) * innerH,
-      value: values[i],
-      day: visibleDaily[i].day,
-    }));
-    return { points, maxVal: max };
-  }, [visibleDaily, mode, innerW, innerH]);
+  const seriesToShow = isolatedYear != null
+    ? yearly.filter((y) => y.year === isolatedYear)
+    : yearly;
+
+  const valueOf = (s: YearlySeries, m: number) =>
+    mode === "quantity" ? s.monthlyQty[m] : s.monthlyNet[m];
+
+  // For the current year, only draw up through the current month —
+  // future months are 0 across the board and dragging the line down to
+  // zero makes it look like sales fell off a cliff. `monthsFor(year)`
+  // returns the count of months we should render (1..12).
+  const nowUtc = new Date();
+  const currentYearUtc = nowUtc.getUTCFullYear();
+  const currentMonthUtc = nowUtc.getUTCMonth();
+  const monthsFor = (year: number) =>
+    year < currentYearUtc ? 12 : Math.min(12, currentMonthUtc + 1);
+
+  // Axis width = the largest visible span across the shown years. If a
+  // past year is in scope its 12 months anchor the axis to Jan-Dec; if
+  // the user isolated the current year, the axis shrinks to Jan-<now>.
+  const axisMonths = seriesToShow.length
+    ? Math.max(...seriesToShow.map((s) => monthsFor(s.year)))
+    : 12;
+
+  const rawMax = Math.max(
+    1,
+    ...seriesToShow.flatMap((s) =>
+      Array.from({ length: monthsFor(s.year) }, (_, m) => valueOf(s, m)),
+    ),
+  );
+  const { maxVal, ticks } = niceScale(rawMax, 4);
+
+  const xOfMonth = (m: number) =>
+    paddingLeft + (innerW * (m + 0.5)) / axisMonths;
+  const yOfValue = (v: number) =>
+    paddingTop + innerH - (Math.max(0, v) / maxVal) * innerH;
 
   const svgRef = useRef<SVGSVGElement>(null);
-
-  // Find the index of the closest data point to the mouse's SVG-space x.
   const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!svgRef.current || visibleDaily.length === 0) return;
+    if (!svgRef.current || seriesToShow.length === 0) return;
     const rect = svgRef.current.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * width;
-    let bestIdx = 0;
+    // Snap to the nearest month index (within the visible axis range).
+    let bestM = 0;
     let bestDist = Infinity;
-    for (let i = 0; i < points.length; i++) {
-      const dx = Math.abs(points[i].x - svgX);
+    for (let m = 0; m < axisMonths; m++) {
+      const dx = Math.abs(xOfMonth(m) - svgX);
       if (dx < bestDist) {
         bestDist = dx;
-        bestIdx = i;
+        bestM = m;
       }
     }
-    setHoverIdx(bestIdx);
+    // For that month, pick the year whose y-position is closest to the
+    // mouse — otherwise a low-earning year steals the hover from the
+    // one the user is actually pointing at. Skip years whose visible
+    // range doesn't extend to this month (e.g. hovering July when it's
+    // still 2026 — 2026 has no future data yet).
+    const svgY = ((e.clientY - rect.top) / rect.height) * height;
+    let bestYear: number | undefined;
+    let bestYDist = Infinity;
+    for (const s of seriesToShow) {
+      if (bestM >= monthsFor(s.year)) continue;
+      const yPos = yOfValue(valueOf(s, bestM));
+      const yd = Math.abs(yPos - svgY);
+      if (yd < bestYDist) {
+        bestYDist = yd;
+        bestYear = s.year;
+      }
+    }
+    if (bestYear != null) setHover({ year: bestYear, month: bestM });
   };
-  const onMouseLeave = () => setHoverIdx(null);
-  const hovered =
-    hoverIdx != null && visibleDaily[hoverIdx]
-      ? { point: points[hoverIdx], day: visibleDaily[hoverIdx] }
-      : null;
+  const onMouseLeave = () => setHover(null);
 
-  const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`)
-    .join(" ");
-
-  const areaPath = points.length
-    ? `${path} L${points[points.length - 1].x},${paddingTop + innerH} L${points[0].x},${paddingTop + innerH} Z`
-    : "";
+  const hoveredSeries =
+    hover != null ? seriesToShow.find((s) => s.year === hover.year) : null;
+  const hoveredValue =
+    hoveredSeries != null && hover != null
+      ? valueOf(hoveredSeries, hover.month)
+      : 0;
 
   return (
     <div
       className="s-card"
-      style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}
+      style={{
+        padding: "var(--space-4)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-3)",
+      }}
     >
       <div
         style={{
@@ -1196,48 +1537,29 @@ function DailyChart({ daily }: { daily: DailyPoint[] }) {
           }}
         >
           {MODE_META[mode].label}
+          {isolatedYear != null && (
+            <span
+              style={{
+                color: "var(--ink-500)",
+                fontFamily: "var(--font-body)",
+                fontWeight: 400,
+                fontSize: 14,
+                marginLeft: 8,
+              }}
+            >
+              · {isolatedYear} only
+            </span>
+          )}
         </h2>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", gap: 4 }}>
-            {(Object.keys(MODE_META) as ChartMode[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                className={`btn btn--xs ${mode === m ? "" : "btn--ghost"}`}
-                onClick={() => setMode(m)}
-              >
-                {MODE_META[m].short}
-              </button>
-            ))}
-          </div>
-          <span
-            aria-hidden
-            style={{
-              width: 1,
-              height: 16,
-              background: "var(--parchment-200)",
-              margin: "0 2px",
-            }}
-          />
-          <div style={{ display: "flex", gap: 4 }}>
-            {TIMEFRAMES.map((t) => {
-              const disabled = t.days !== null && daily.length < t.days / 3;
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  className={`btn btn--xs ${timeframe === t.key ? "" : "btn--ghost"}`}
-                  onClick={() => setTimeframe(t.key)}
-                  disabled={disabled}
-                  title={disabled ? "Not enough data for this range yet" : undefined}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <ChartControls
+          mode={mode}
+          setMode={setMode}
+          years={yearly.map((y) => y.year)}
+          isolatedYear={isolatedYear}
+          setIsolatedYear={setIsolatedYear}
+        />
       </div>
+
       <div style={{ position: "relative" }}>
         <svg
           ref={svgRef}
@@ -1247,42 +1569,35 @@ function DailyChart({ daily }: { daily: DailyPoint[] }) {
           onMouseLeave={onMouseLeave}
           style={{ overflow: "visible", cursor: "crosshair" }}
         >
-          <defs>
-            <linearGradient id="area-grad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--sage-500)" stopOpacity="0.35" />
-              <stop offset="100%" stopColor="var(--sage-500)" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {[0, 0.25, 0.5, 0.75, 1].map((t) => (
-            <line
-              key={t}
-              x1={paddingLeft}
-              x2={paddingLeft + innerW}
-              y1={paddingTop + innerH * (1 - t)}
-              y2={paddingTop + innerH * (1 - t)}
-              stroke="var(--parchment-200)"
-              strokeWidth={1}
-            />
+          {/* Horizontal grid + Y-axis labels */}
+          {ticks.map((t) => (
+            <g key={t}>
+              <line
+                x1={paddingLeft}
+                x2={paddingLeft + innerW}
+                y1={yOfValue(t)}
+                y2={yOfValue(t)}
+                stroke="var(--parchment-200)"
+                strokeWidth={1}
+              />
+              <text
+                x={paddingLeft - 8}
+                y={yOfValue(t) + 4}
+                fontSize="11"
+                fill="var(--ink-500)"
+                textAnchor="end"
+                fontFamily="var(--font-mono)"
+              >
+                {MODE_META[mode].format(t)}
+              </text>
+            </g>
           ))}
-          {areaPath && <path d={areaPath} fill="url(#area-grad)" />}
-          {path && (
-            <path d={path} stroke="var(--sage-700)" strokeWidth={2} fill="none" />
-          )}
-          {points.map((p, i) => (
-            <circle
-              key={p.day}
-              cx={p.x}
-              cy={p.y}
-              r={hoverIdx === i ? 4.5 : 2.5}
-              fill="var(--sage-700)"
-              stroke={hoverIdx === i ? "#fff" : "none"}
-              strokeWidth={hoverIdx === i ? 2 : 0}
-            />
-          ))}
-          {hovered && (
+
+          {/* Vertical guide at hovered month */}
+          {hover && (
             <line
-              x1={hovered.point.x}
-              x2={hovered.point.x}
+              x1={xOfMonth(hover.month)}
+              x2={xOfMonth(hover.month)}
               y1={paddingTop}
               y2={paddingTop + innerH}
               stroke="var(--ink-300)"
@@ -1291,44 +1606,63 @@ function DailyChart({ daily }: { daily: DailyPoint[] }) {
               pointerEvents="none"
             />
           )}
-          {points.length > 0 && (
-            <>
-              <text
-                x={paddingLeft}
-                y={paddingTop + innerH + 18}
-                fontSize="11"
-                fill="var(--ink-500)"
-                textAnchor="start"
-              >
-                {points[0].day}
-              </text>
-              <text
-                x={paddingLeft + innerW}
-                y={paddingTop + innerH + 18}
-                fontSize="11"
-                fill="var(--ink-500)"
-                textAnchor="end"
-              >
-                {points[points.length - 1].day}
-              </text>
-              <text
-                x={paddingLeft - 8}
-                y={paddingTop + 4}
-                fontSize="11"
-                fill="var(--ink-500)"
-                textAnchor="end"
-              >
-                {MODE_META[mode].format(maxVal)}
-              </text>
-            </>
-          )}
+
+          {/* Year lines */}
+          {yearly.map((s, i) => {
+            const color = YEAR_COLORS[i % YEAR_COLORS.length];
+            const dimmed = isolatedYear != null && isolatedYear !== s.year;
+            const opacity = dimmed ? 0.08 : 1;
+            const visible = monthsFor(s.year);
+            const monthIndexes = Array.from({ length: visible }, (_, m) => m);
+            const path = monthIndexes
+              .map((m) => `${m === 0 ? "M" : "L"}${xOfMonth(m)},${yOfValue(valueOf(s, m))}`)
+              .join(" ");
+            return (
+              <g key={s.year} opacity={opacity} pointerEvents={dimmed ? "none" : undefined}>
+                <path d={path} stroke={color} strokeWidth={2} fill="none" />
+                {monthIndexes.map((m) => {
+                  const v = valueOf(s, m);
+                  const isHovered =
+                    hover?.year === s.year && hover?.month === m;
+                  return (
+                    <circle
+                      key={m}
+                      cx={xOfMonth(m)}
+                      cy={yOfValue(v)}
+                      r={isHovered ? 5 : 3}
+                      fill={color}
+                      stroke={isHovered ? "#fff" : "none"}
+                      strokeWidth={isHovered ? 2 : 0}
+                    />
+                  );
+                })}
+              </g>
+            );
+          })}
+
+          {/* X-axis month labels */}
+          {MONTH_LABELS.slice(0, axisMonths).map((label, m) => (
+            <text
+              key={label}
+              x={xOfMonth(m)}
+              y={paddingTop + innerH + 18}
+              fontSize="11"
+              fill="var(--ink-500)"
+              textAnchor="middle"
+            >
+              {label}
+            </text>
+          ))}
         </svg>
-        {hovered && (
-          <HoverTooltip
-            day={hovered.day}
+        {hover && hoveredSeries && (
+          <YoyTooltip
+            year={hover.year}
+            month={hover.month}
+            value={hoveredValue}
+            mode={mode}
             containerWidth={width}
-            xInViewBox={hovered.point.x}
-            yInViewBox={hovered.point.y}
+            xInViewBox={xOfMonth(hover.month)}
+            yInViewBox={yOfValue(hoveredValue)}
             viewBoxHeight={height}
           />
         )}
@@ -1337,17 +1671,67 @@ function DailyChart({ daily }: { daily: DailyPoint[] }) {
   );
 }
 
-// Positioned tooltip above the hovered data point. Translates the point's
-// SVG-space coordinates to CSS % so it tracks the chart even when the
-// SVG scales responsively.
-function HoverTooltip({
-  day,
+// Compute "nice" Y-axis tick values that round to human-friendly
+// increments — $2k, $5k, $10k rather than the exact max. Returns the
+// adjusted top-of-scale plus 4-5 tick values including 0.
+function niceScale(rawMax: number, tickHint: number): {
+  maxVal: number;
+  ticks: number[];
+} {
+  if (rawMax <= 0) return { maxVal: 1, ticks: [0, 1] };
+  const roughStep = rawMax / tickHint;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const norm = roughStep / pow10;
+  const step =
+    norm <= 1
+      ? 1 * pow10
+      : norm <= 2
+        ? 2 * pow10
+        : norm <= 2.5
+          ? 2.5 * pow10
+          : norm <= 5
+            ? 5 * pow10
+            : 10 * pow10;
+  const maxVal = Math.ceil(rawMax / step) * step;
+  const ticks: number[] = [];
+  for (let t = 0; t <= maxVal + 0.0001; t += step) {
+    ticks.push(Math.round(t * 100) / 100);
+  }
+  return { maxVal, ticks };
+}
+
+function moneyCompact(n: number): string {
+  if (Math.abs(n) >= 1000000)
+    return `$${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1)}M`;
+  if (Math.abs(n) >= 1000)
+    return `$${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return `$${n.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
+}
+
+function compactNumber(n: number): string {
+  if (Math.abs(n) >= 1000000)
+    return `${(n / 1000000).toFixed(1)}M`;
+  if (Math.abs(n) >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return n.toLocaleString("en-US");
+}
+
+function YoyTooltip({
+  year,
+  month,
+  value,
+  mode,
   containerWidth,
   xInViewBox,
   yInViewBox,
   viewBoxHeight,
 }: {
-  day: DailyPoint;
+  year: number;
+  month: number;
+  value: number;
+  mode: ChartMode;
   containerWidth: number;
   xInViewBox: number;
   yInViewBox: number;
@@ -1355,6 +1739,10 @@ function HoverTooltip({
 }) {
   const leftPct = (xInViewBox / containerWidth) * 100;
   const topPct = (yInViewBox / viewBoxHeight) * 100;
+  const label =
+    mode === "revenue"
+      ? money(value)
+      : value.toLocaleString("en-US");
   return (
     <div
       style={{
@@ -1375,27 +1763,1095 @@ function HoverTooltip({
         fontFamily: "var(--font-mono)",
       }}
     >
-      <div style={{ fontWeight: 700, marginBottom: 2 }}>{day.day}</div>
-      <div>
-        <span style={{ opacity: 0.7 }}>net </span>
-        {money(day.net)}
+      <div style={{ fontWeight: 700, marginBottom: 2 }}>
+        {MONTH_LABELS[month]} {year}
       </div>
       <div>
-        <span style={{ opacity: 0.7 }}># sales </span>
-        {day.count.toLocaleString("en-US")}
+        <span style={{ opacity: 0.7 }}>
+          {mode === "revenue" ? "net " : "qty "}
+        </span>
+        {label}
       </div>
-      <div>
-        <span style={{ opacity: 0.7 }}>qty </span>
-        {day.qty.toLocaleString("en-US")}
-      </div>
-      {day.refunds > 0 && (
-        <div style={{ color: "var(--brick-500)" }}>
-          <span style={{ opacity: 0.7 }}>refunds </span>
-          {money(day.refunds)}
-        </div>
-      )}
     </div>
   );
+}
+
+// Top-10 designs monthly time series. One line per design, hover shows
+// title + total revenue + wallpaper/fabric/decor mix bar.
+function Top10DesignsChart({
+  series: allSeries,
+  months,
+  cachedSet,
+  storageUrlBase,
+}: {
+  series: DesignMonthlySeries[];
+  months: string[];
+  cachedSet: Set<number>;
+  storageUrlBase: string;
+}) {
+  const [hover, setHover] = useState<{
+    designIdx: number;
+    monthIdx: number;
+  } | null>(null);
+  const [highlighted, setHighlighted] = useState<number | null>(null);
+  const [legendHover, setLegendHover] = useState<number | null>(null);
+  // Year filter: null = all years, else a specific YYYY.
+  const [isolatedYear, setIsolatedYear] = useState<number | null>(null);
+  const [mode, setMode] = useState<ChartMode>("revenue");
+  const monthlyFor = (s: DesignMonthlySeries) =>
+    mode === "quantity" ? s.monthlyQty : s.monthly;
+
+  // Server sends the union of top-N-by-revenue and top-N-by-qty so we
+  // can re-rank locally when mode toggles without losing high-qty low-$
+  // designs. Cap at 10 after re-sorting.
+  const series = useMemo(() => {
+    const sorted = [...allSeries].sort((a, b) =>
+      mode === "quantity"
+        ? b.totalQty - a.totalQty
+        : b.totalNet - a.totalNet,
+    );
+    return sorted.slice(0, 10);
+  }, [allSeries, mode]);
+
+  useEffect(() => {
+    setHighlighted(null);
+    setHover(null);
+    setLegendHover(null);
+  }, [mode]);
+
+  // All distinct years present in the data — powers the year buttons.
+  const availableYears = useMemo(() => {
+    const set = new Set<number>();
+    for (const m of months) set.add(parseInt(m.split("-")[0], 10));
+    return Array.from(set).sort((a, b) => a - b);
+  }, [months]);
+
+  // Filter months + monthly series by isolated year (if any).
+  const visibleMonths = useMemo(
+    () =>
+      isolatedYear == null
+        ? months
+        : months.filter(
+            (m) => parseInt(m.split("-")[0], 10) === isolatedYear,
+          ),
+    [months, isolatedYear],
+  );
+
+  const width = 1080;
+  const height = 260;
+  const paddingLeft = 60;
+  const paddingRight = 20;
+  const paddingTop = 24;
+  const paddingBottom = 40;
+  const innerW = width - paddingLeft - paddingRight;
+  const innerH = height - paddingTop - paddingBottom;
+
+  const rawMax = Math.max(
+    1,
+    ...series.flatMap((s) =>
+      visibleMonths.map((m) => monthlyFor(s)[m] ?? 0),
+    ),
+  );
+  const { maxVal, ticks } = niceScale(rawMax, 4);
+
+  const xOfMonth = (i: number) =>
+    visibleMonths.length === 1
+      ? paddingLeft + innerW / 2
+      : paddingLeft + (innerW * i) / (visibleMonths.length - 1);
+  const yOfValue = (v: number) =>
+    paddingTop + innerH - (Math.max(0, v) / maxVal) * innerH;
+
+  const svgRef = useRef<SVGSVGElement>(null);
+  const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!svgRef.current || series.length === 0 || visibleMonths.length === 0)
+      return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * width;
+    const svgY = ((e.clientY - rect.top) / rect.height) * height;
+    // Snap to nearest month index.
+    let bestM = 0;
+    let bestMDist = Infinity;
+    for (let i = 0; i < visibleMonths.length; i++) {
+      const dx = Math.abs(xOfMonth(i) - svgX);
+      if (dx < bestMDist) {
+        bestMDist = dx;
+        bestM = i;
+      }
+    }
+    // Pick the closest design at that month (respect selection: if a
+    // design is isolated, only that one is hoverable).
+    const candidateIdxs =
+      highlighted != null ? [highlighted] : series.map((_, i) => i);
+    let bestD = candidateIdxs[0] ?? 0;
+    let bestDDist = Infinity;
+    for (const i of candidateIdxs) {
+      const v = monthlyFor(series[i])[visibleMonths[bestM]] ?? 0;
+      const yd = Math.abs(yOfValue(v) - svgY);
+      if (yd < bestDDist) {
+        bestDDist = yd;
+        bestD = i;
+      }
+    }
+    setHover({ designIdx: bestD, monthIdx: bestM });
+  };
+  const onMouseLeave = () => setHover(null);
+
+  // Space month labels — with more than 12 months on the axis the labels
+  // overlap. Show every Nth so the axis stays legible.
+  const monthLabelStride =
+    visibleMonths.length > 24
+      ? 6
+      : visibleMonths.length > 12
+        ? 3
+        : visibleMonths.length > 8
+          ? 2
+          : 1;
+
+  const hoveredSeries = hover != null ? series[hover.designIdx] : null;
+  const hoveredValue =
+    hover != null && hoveredSeries != null
+      ? monthlyFor(hoveredSeries)[visibleMonths[hover.monthIdx]] ?? 0
+      : 0;
+
+  if (series.length === 0) return null;
+
+  return (
+    <div
+      className="s-card"
+      style={{
+        padding: "var(--space-4)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-3)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "var(--space-3)",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+            margin: 0,
+          }}
+        >
+          Top 10 designs over time
+          <span
+            style={{
+              color: "var(--ink-500)",
+              fontFamily: "var(--font-body)",
+              fontWeight: 400,
+              fontSize: 13,
+              marginLeft: 8,
+            }}
+          >
+            {MODE_META[mode].label.toLowerCase()} by month
+            {isolatedYear != null && ` · ${isolatedYear}`}
+          </span>
+        </h2>
+        <ChartControls
+          mode={mode}
+          setMode={setMode}
+          years={availableYears}
+          isolatedYear={isolatedYear}
+          setIsolatedYear={setIsolatedYear}
+        />
+      </div>
+
+      <div style={{ position: "relative" }}>
+        <svg
+          ref={svgRef}
+          width="100%"
+          viewBox={`0 0 ${width} ${height}`}
+          onMouseMove={onMouseMove}
+          onMouseLeave={onMouseLeave}
+          style={{ overflow: "visible", cursor: "crosshair" }}
+        >
+          {/* Horizontal gridlines + Y-axis labels */}
+          {ticks.map((t) => (
+            <g key={t}>
+              <line
+                x1={paddingLeft}
+                x2={paddingLeft + innerW}
+                y1={yOfValue(t)}
+                y2={yOfValue(t)}
+                stroke="var(--parchment-200)"
+                strokeWidth={1}
+              />
+              <text
+                x={paddingLeft - 8}
+                y={yOfValue(t) + 4}
+                fontSize="11"
+                fill="var(--ink-500)"
+                textAnchor="end"
+                fontFamily="var(--font-mono)"
+              >
+                {MODE_META[mode].format(t)}
+              </text>
+            </g>
+          ))}
+
+          {/* Hover guide */}
+          {hover && (
+            <line
+              x1={xOfMonth(hover.monthIdx)}
+              x2={xOfMonth(hover.monthIdx)}
+              y1={paddingTop}
+              y2={paddingTop + innerH}
+              stroke="var(--ink-300)"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+              pointerEvents="none"
+            />
+          )}
+
+          {/* Design lines. If a design is isolated, only that one draws. */}
+          {series.map((s, i) => {
+            if (highlighted != null && highlighted !== i) return null;
+            const color = YEAR_COLORS[i % YEAR_COLORS.length];
+            const values = monthlyFor(s);
+            const path = visibleMonths
+              .map((m, mi) => {
+                const v = values[m] ?? 0;
+                return `${mi === 0 ? "M" : "L"}${xOfMonth(mi)},${yOfValue(v)}`;
+              })
+              .join(" ");
+            return (
+              <g key={s.design_id}>
+                <path
+                  d={path}
+                  stroke={color}
+                  strokeWidth={highlighted === i ? 3 : 2}
+                  fill="none"
+                />
+                {visibleMonths.map((m, mi) => {
+                  const v = values[m] ?? 0;
+                  const isHovered =
+                    hover?.designIdx === i && hover?.monthIdx === mi;
+                  return (
+                    <circle
+                      key={m}
+                      cx={xOfMonth(mi)}
+                      cy={yOfValue(v)}
+                      r={isHovered ? 5 : 2.5}
+                      fill={color}
+                      stroke={isHovered ? "#fff" : "none"}
+                      strokeWidth={isHovered ? 2 : 0}
+                    />
+                  );
+                })}
+              </g>
+            );
+          })}
+
+          {/* X-axis month labels */}
+          {visibleMonths.map((m, i) => {
+            if (i % monthLabelStride !== 0) return null;
+            const [year, month] = m.split("-");
+            const label =
+              isolatedYear != null
+                ? MONTH_LABELS[parseInt(month, 10) - 1]
+                : `${MONTH_LABELS[parseInt(month, 10) - 1]} ${year.slice(2)}`;
+            return (
+              <text
+                key={m}
+                x={xOfMonth(i)}
+                y={paddingTop + innerH + 18}
+                fontSize="10.5"
+                fill="var(--ink-500)"
+                textAnchor="middle"
+              >
+                {label}
+              </text>
+            );
+          })}
+        </svg>
+        {hover && hoveredSeries && svgRef.current && (
+          <Top10FloatingTooltip
+            designSeries={hoveredSeries}
+            month={visibleMonths[hover.monthIdx]}
+            monthValue={hoveredValue}
+            mode={mode}
+            svgEl={svgRef.current}
+            xInViewBox={xOfMonth(hover.monthIdx)}
+            yInViewBox={yOfValue(hoveredValue)}
+            viewBoxWidth={width}
+            viewBoxHeight={height}
+            cached={cachedSet.has(hoveredSeries.design_id)}
+            storageUrlBase={storageUrlBase}
+          />
+        )}
+      </div>
+
+      {/* Legend below the chart — thumbnails. Click one to isolate that
+          design; click again to show all. */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "center",
+        }}
+      >
+        {series.map((s, i) => {
+          const color = YEAR_COLORS[i % YEAR_COLORS.length];
+          const active = highlighted === i;
+          const dim = highlighted != null && highlighted !== i;
+          const hovered = legendHover === i;
+          return (
+            <div
+              key={s.design_id}
+              style={{ position: "relative", flexShrink: 0 }}
+            >
+              <button
+                type="button"
+                onClick={() => setHighlighted(active ? null : i)}
+                onMouseEnter={() => setLegendHover(i)}
+                onMouseLeave={() =>
+                  setLegendHover((v) => (v === i ? null : v))
+                }
+                style={{
+                  position: "relative",
+                  width: 96,
+                  height: 96,
+                  padding: 0,
+                  // Always outline in the design's line color so the
+                  // thumbnail visually anchors to its line on the graph.
+                  border: `4px solid ${color}`,
+                  borderRadius: 12,
+                  background: "var(--surface)",
+                  cursor: "pointer",
+                  overflow: "hidden",
+                  opacity: dim ? 0.35 : 1,
+                  transition:
+                    "opacity 160ms ease-out, box-shadow 160ms ease-out",
+                  // Extra ring when active or hovered to signal state
+                  // without changing the always-visible outline color.
+                  boxShadow:
+                    active || hovered ? `0 0 0 3px ${color}33` : "none",
+                }}
+              >
+                <DesignSquareThumb
+                  designId={s.design_id}
+                  title={s.design_title}
+                  cached={cachedSet.has(s.design_id)}
+                  storageUrlBase={storageUrlBase}
+                  size={88}
+                />
+                {/* Total pill — mode-aware so the badge matches whatever
+                    the chart's y-axis is currently plotting. */}
+                <span
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    bottom: 6,
+                    transform: "translateX(-50%)",
+                    padding: "1px 8px",
+                    borderRadius: 999,
+                    background: "var(--ink-900)",
+                    color: "var(--parchment-50)",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    fontFamily: "var(--font-mono)",
+                    lineHeight: 1.4,
+                    pointerEvents: "none",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+                  }}
+                >
+                  {mode === "quantity"
+                    ? `${Math.round(s.totalQty)}×`
+                    : moneyCompact(s.totalNet)}
+                </span>
+              </button>
+              {hovered && s.design_title && (
+                <LegendTitleChip title={s.design_title} color={color} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Small floating chip that appears above a legend thumbnail on hover
+// to reveal the design title without waiting on the browser's native
+// title-attribute delay. Positioned absolutely relative to the wrapping
+// legend cell (position: relative on the parent), so it floats above
+// its own thumbnail without pushing siblings around.
+function LegendTitleChip({ title, color }: { title: string; color: string }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: "50%",
+        bottom: "calc(100% + 6px)",
+        transform: "translateX(-50%)",
+        maxWidth: 260,
+        padding: "6px 10px",
+        borderRadius: 8,
+        background: "var(--ink-900)",
+        color: "var(--parchment-50)",
+        fontSize: 12,
+        lineHeight: 1.35,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        borderLeft: `3px solid ${color}`,
+        boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+        pointerEvents: "none",
+        zIndex: 5,
+      }}
+    >
+      {title}
+    </div>
+  );
+}
+
+// Floating tooltip that escapes any parent overflow (including the
+// sidebar). Uses a fixed-position div in a portal, computing viewport
+// coordinates from the SVG bounding rect. This is what the user needs
+// when the chart is narrow enough that the tooltip would otherwise be
+// clipped by the left sidebar.
+function Top10FloatingTooltip({
+  designSeries,
+  month,
+  monthValue,
+  mode,
+  svgEl,
+  xInViewBox,
+  yInViewBox,
+  viewBoxWidth,
+  viewBoxHeight,
+  cached,
+  storageUrlBase,
+}: {
+  designSeries: DesignMonthlySeries;
+  month: string;
+  monthValue: number;
+  mode: ChartMode;
+  svgEl: SVGSVGElement;
+  xInViewBox: number;
+  yInViewBox: number;
+  viewBoxWidth: number;
+  viewBoxHeight: number;
+  cached: boolean;
+  storageUrlBase: string;
+}) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  const rect = svgEl.getBoundingClientRect();
+  const scaleX = rect.width / viewBoxWidth;
+  const scaleY = rect.height / viewBoxHeight;
+  const anchorX = rect.left + xInViewBox * scaleX;
+  const anchorY = rect.top + yInViewBox * scaleY;
+  // Clamp so tooltip stays inside the viewport horizontally.
+  const tooltipWidth = 260;
+  const half = tooltipWidth / 2;
+  const left = Math.min(
+    Math.max(anchorX, half + 8),
+    (typeof window !== "undefined" ? window.innerWidth : 9999) - half - 8,
+  );
+  const top = Math.max(anchorY - 12, 8);
+  const [year, monthNum] = month.split("-");
+  const monthLabel = `${MONTH_LABELS[parseInt(monthNum, 10) - 1]} ${year}`;
+  const node = (
+    <div
+      style={{
+        position: "fixed",
+        left,
+        top,
+        transform: "translate(-50%, -100%)",
+        pointerEvents: "none",
+        background: "var(--ink-900)",
+        color: "var(--parchment-50)",
+        borderRadius: 8,
+        padding: "10px 12px",
+        fontSize: 11.5,
+        lineHeight: 1.5,
+        boxShadow: "var(--shadow-lg)",
+        zIndex: 1000,
+        width: tooltipWidth,
+      }}
+    >
+      <div style={{ display: "flex", gap: 10 }}>
+      <div style={{ flexShrink: 0 }}>
+        <div
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 6,
+            overflow: "hidden",
+            background: "rgba(255,255,255,0.06)",
+          }}
+        >
+          <DesignSquareThumb
+            designId={designSeries.design_id}
+            title={designSeries.design_title}
+            cached={cached}
+            storageUrlBase={storageUrlBase}
+            size={56}
+          />
+        </div>
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div
+          style={{
+            fontWeight: 700,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {designSeries.design_title}
+        </div>
+        <div style={{ opacity: 0.7, fontSize: 10.5, marginBottom: 6 }}>
+          #{designSeries.design_id}
+        </div>
+        <div style={{ fontFamily: "var(--font-mono)" }}>
+          <span style={{ opacity: 0.7 }}>{monthLabel} </span>
+          {mode === "quantity"
+            ? `${Math.round(monthValue)} sold`
+            : money(monthValue)}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 3 }}>
+            PRODUCT MIX
+          </div>
+        <div
+          style={{
+            display: "flex",
+            height: 8,
+            borderRadius: 999,
+            overflow: "hidden",
+            background: "rgba(255,255,255,0.08)",
+          }}
+        >
+          {designSeries.wallpaperPct > 0 && (
+            <div
+              style={{
+                width: `${designSeries.wallpaperPct}%`,
+                background: "var(--slate-500)",
+              }}
+              title={`Wallpaper ${designSeries.wallpaperPct}%`}
+            />
+          )}
+          {designSeries.fabricPct > 0 && (
+            <div
+              style={{
+                width: `${designSeries.fabricPct}%`,
+                background: "var(--sage-500)",
+              }}
+              title={`Fabric ${designSeries.fabricPct}%`}
+            />
+          )}
+          {designSeries.decorPct > 0 && (
+            <div
+              style={{
+                width: `${designSeries.decorPct}%`,
+                background: "var(--saffron-500)",
+              }}
+              title={`Home decor ${designSeries.decorPct}%`}
+            />
+          )}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            marginTop: 4,
+            fontSize: 10.5,
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {designSeries.wallpaperPct > 0 && (
+            <span>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  background: "var(--slate-500)",
+                  borderRadius: 2,
+                  marginRight: 4,
+                }}
+              />
+              wallpaper {designSeries.wallpaperPct}%
+            </span>
+          )}
+          {designSeries.fabricPct > 0 && (
+            <span>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  background: "var(--sage-500)",
+                  borderRadius: 2,
+                  marginRight: 4,
+                }}
+              />
+              fabric {designSeries.fabricPct}%
+            </span>
+          )}
+          {designSeries.decorPct > 0 && (
+            <span>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  background: "var(--saffron-500)",
+                  borderRadius: 2,
+                  marginRight: 4,
+                }}
+              />
+              decor {designSeries.decorPct}%
+            </span>
+          )}
+        </div>
+      </div>
+      </div>
+      </div>
+    </div>
+  );
+  return createPortal(node, document.body);
+}
+
+// Top-10 keywords over time. Similar structure to Top10DesignsChart but
+// simpler — no thumbnails, keyword string is the legend chip label.
+// Also supports the same year filter.
+function Top10KeywordsChart({
+  series: allSeries,
+  months,
+}: {
+  series: KeywordMonthlySeries[];
+  months: string[];
+}) {
+  const [hover, setHover] = useState<{
+    kwIdx: number;
+    monthIdx: number;
+  } | null>(null);
+  const [highlighted, setHighlighted] = useState<number | null>(null);
+  const [isolatedYear, setIsolatedYear] = useState<number | null>(null);
+  const [mode, setMode] = useState<ChartMode>("revenue");
+  const monthlyFor = (s: KeywordMonthlySeries) =>
+    mode === "quantity" ? s.monthlyQty : s.monthly;
+
+  // The server sends the union of top-N-by-revenue and top-N-by-qty so
+  // we can re-rank locally when the mode toggles without losing keywords
+  // that dominate only one metric. Re-slice back to the display cap of
+  // 20 after sorting.
+  const series = useMemo(() => {
+    const sorted = [...allSeries].sort((a, b) =>
+      mode === "quantity"
+        ? b.totalQty - a.totalQty
+        : b.totalNet - a.totalNet,
+    );
+    return sorted.slice(0, 20);
+  }, [allSeries, mode]);
+
+  // Any time the ranking changes the highlighted-index would point at
+  // the wrong keyword — reset it. Same for hover.
+  useEffect(() => {
+    setHighlighted(null);
+    setHover(null);
+  }, [mode]);
+
+  const availableYears = useMemo(() => {
+    const set = new Set<number>();
+    for (const m of months) set.add(parseInt(m.split("-")[0], 10));
+    return Array.from(set).sort((a, b) => a - b);
+  }, [months]);
+
+  const visibleMonths = useMemo(
+    () =>
+      isolatedYear == null
+        ? months
+        : months.filter(
+            (m) => parseInt(m.split("-")[0], 10) === isolatedYear,
+          ),
+    [months, isolatedYear],
+  );
+
+  const width = 1080;
+  const height = 240;
+  const paddingLeft = 60;
+  const paddingRight = 20;
+  const paddingTop = 24;
+  const paddingBottom = 40;
+  const innerW = width - paddingLeft - paddingRight;
+  const innerH = height - paddingTop - paddingBottom;
+
+  const rawMax = Math.max(
+    1,
+    ...series.flatMap((s) =>
+      visibleMonths.map((m) => monthlyFor(s)[m] ?? 0),
+    ),
+  );
+  const { maxVal, ticks } = niceScale(rawMax, 4);
+
+  const xOfMonth = (i: number) =>
+    visibleMonths.length === 1
+      ? paddingLeft + innerW / 2
+      : paddingLeft + (innerW * i) / (visibleMonths.length - 1);
+  const yOfValue = (v: number) =>
+    paddingTop + innerH - (Math.max(0, v) / maxVal) * innerH;
+
+  const svgRef = useRef<SVGSVGElement>(null);
+  const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!svgRef.current || series.length === 0 || visibleMonths.length === 0)
+      return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * width;
+    const svgY = ((e.clientY - rect.top) / rect.height) * height;
+    let bestM = 0;
+    let bestMDist = Infinity;
+    for (let i = 0; i < visibleMonths.length; i++) {
+      const dx = Math.abs(xOfMonth(i) - svgX);
+      if (dx < bestMDist) {
+        bestMDist = dx;
+        bestM = i;
+      }
+    }
+    const candidateIdxs =
+      highlighted != null ? [highlighted] : series.map((_, i) => i);
+    let bestK = candidateIdxs[0] ?? 0;
+    let bestKDist = Infinity;
+    for (const i of candidateIdxs) {
+      const v = monthlyFor(series[i])[visibleMonths[bestM]] ?? 0;
+      const yd = Math.abs(yOfValue(v) - svgY);
+      if (yd < bestKDist) {
+        bestKDist = yd;
+        bestK = i;
+      }
+    }
+    setHover({ kwIdx: bestK, monthIdx: bestM });
+  };
+  const onMouseLeave = () => setHover(null);
+
+  const monthLabelStride =
+    visibleMonths.length > 24
+      ? 6
+      : visibleMonths.length > 12
+        ? 3
+        : visibleMonths.length > 8
+          ? 2
+          : 1;
+
+  const hoveredSeries = hover != null ? series[hover.kwIdx] : null;
+  const hoveredValue =
+    hover != null && hoveredSeries != null
+      ? monthlyFor(hoveredSeries)[visibleMonths[hover.monthIdx]] ?? 0
+      : 0;
+
+  if (series.length === 0) return null;
+
+  return (
+    <div
+      className="s-card"
+      style={{
+        padding: "var(--space-4)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-3)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "var(--space-3)",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+            margin: 0,
+          }}
+        >
+          Top 20 keywords by sales
+          <span
+            style={{
+              color: "var(--ink-500)",
+              fontFamily: "var(--font-body)",
+              fontWeight: 400,
+              fontSize: 13,
+              marginLeft: 8,
+            }}
+          >
+            {MODE_META[mode].label.toLowerCase()} on sales featuring
+            each keyword
+            {isolatedYear != null && ` · ${isolatedYear}`}
+          </span>
+        </h2>
+        <ChartControls
+          mode={mode}
+          setMode={setMode}
+          years={availableYears}
+          isolatedYear={isolatedYear}
+          setIsolatedYear={setIsolatedYear}
+        />
+      </div>
+
+      <div style={{ position: "relative" }}>
+        <svg
+          ref={svgRef}
+          width="100%"
+          viewBox={`0 0 ${width} ${height}`}
+          onMouseMove={onMouseMove}
+          onMouseLeave={onMouseLeave}
+          style={{ overflow: "visible", cursor: "crosshair" }}
+        >
+          {ticks.map((t) => (
+            <g key={t}>
+              <line
+                x1={paddingLeft}
+                x2={paddingLeft + innerW}
+                y1={yOfValue(t)}
+                y2={yOfValue(t)}
+                stroke="var(--parchment-200)"
+                strokeWidth={1}
+              />
+              <text
+                x={paddingLeft - 8}
+                y={yOfValue(t) + 4}
+                fontSize="11"
+                fill="var(--ink-500)"
+                textAnchor="end"
+                fontFamily="var(--font-mono)"
+              >
+                {MODE_META[mode].format(t)}
+              </text>
+            </g>
+          ))}
+          {hover && (
+            <line
+              x1={xOfMonth(hover.monthIdx)}
+              x2={xOfMonth(hover.monthIdx)}
+              y1={paddingTop}
+              y2={paddingTop + innerH}
+              stroke="var(--ink-300)"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+              pointerEvents="none"
+            />
+          )}
+          {series.map((s, i) => {
+            if (highlighted != null && highlighted !== i) return null;
+            const color = YEAR_COLORS[i % YEAR_COLORS.length];
+            const values = monthlyFor(s);
+            const path = visibleMonths
+              .map((m, mi) => {
+                const v = values[m] ?? 0;
+                return `${mi === 0 ? "M" : "L"}${xOfMonth(mi)},${yOfValue(v)}`;
+              })
+              .join(" ");
+            return (
+              <g key={s.keyword}>
+                <path
+                  d={path}
+                  stroke={color}
+                  strokeWidth={highlighted === i ? 3 : 2}
+                  fill="none"
+                />
+                {visibleMonths.map((m, mi) => {
+                  const v = values[m] ?? 0;
+                  const isHovered =
+                    hover?.kwIdx === i && hover?.monthIdx === mi;
+                  return (
+                    <circle
+                      key={m}
+                      cx={xOfMonth(mi)}
+                      cy={yOfValue(v)}
+                      r={isHovered ? 5 : 2.5}
+                      fill={color}
+                      stroke={isHovered ? "#fff" : "none"}
+                      strokeWidth={isHovered ? 2 : 0}
+                    />
+                  );
+                })}
+              </g>
+            );
+          })}
+          {visibleMonths.map((m, i) => {
+            if (i % monthLabelStride !== 0) return null;
+            const [year, month] = m.split("-");
+            const label =
+              isolatedYear != null
+                ? MONTH_LABELS[parseInt(month, 10) - 1]
+                : `${MONTH_LABELS[parseInt(month, 10) - 1]} ${year.slice(2)}`;
+            return (
+              <text
+                key={m}
+                x={xOfMonth(i)}
+                y={paddingTop + innerH + 18}
+                fontSize="10.5"
+                fill="var(--ink-500)"
+                textAnchor="middle"
+              >
+                {label}
+              </text>
+            );
+          })}
+        </svg>
+        {hover && hoveredSeries && svgRef.current && (
+          <KeywordFloatingTooltip
+            keyword={hoveredSeries.keyword}
+            month={visibleMonths[hover.monthIdx]}
+            monthValue={hoveredValue}
+            mode={mode}
+            svgEl={svgRef.current}
+            xInViewBox={xOfMonth(hover.monthIdx)}
+            yInViewBox={yOfValue(hoveredValue)}
+            viewBoxWidth={width}
+            viewBoxHeight={height}
+          />
+        )}
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {series.map((s, i) => {
+          const color = YEAR_COLORS[i % YEAR_COLORS.length];
+          const active = highlighted === i;
+          const dim = highlighted != null && highlighted !== i;
+          return (
+            <button
+              key={s.keyword}
+              type="button"
+              onClick={() => setHighlighted(active ? null : i)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 10px",
+                border: `1px solid ${active ? color : "var(--parchment-200)"}`,
+                borderRadius: 999,
+                background: active
+                  ? "var(--parchment-100)"
+                  : "var(--surface)",
+                cursor: "pointer",
+                font: "inherit",
+                opacity: dim ? 0.4 : 1,
+                fontSize: 12.5,
+                color: "var(--ink-900)",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: color,
+                }}
+              />
+              {s.keyword}
+              <span
+                style={{
+                  marginLeft: 4,
+                  padding: "0 6px",
+                  borderRadius: 999,
+                  background: "var(--ink-900)",
+                  color: "var(--parchment-50)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {mode === "quantity"
+                  ? `${Math.round(s.totalQty)}×`
+                  : moneyCompact(s.totalNet)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function KeywordFloatingTooltip({
+  keyword,
+  month,
+  monthValue,
+  mode,
+  svgEl,
+  xInViewBox,
+  yInViewBox,
+  viewBoxWidth,
+  viewBoxHeight,
+}: {
+  keyword: string;
+  month: string;
+  monthValue: number;
+  mode: ChartMode;
+  svgEl: SVGSVGElement;
+  xInViewBox: number;
+  yInViewBox: number;
+  viewBoxWidth: number;
+  viewBoxHeight: number;
+}) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  const rect = svgEl.getBoundingClientRect();
+  const scaleX = rect.width / viewBoxWidth;
+  const scaleY = rect.height / viewBoxHeight;
+  const anchorX = rect.left + xInViewBox * scaleX;
+  const anchorY = rect.top + yInViewBox * scaleY;
+  const tooltipWidth = 180;
+  const half = tooltipWidth / 2;
+  const left = Math.min(
+    Math.max(anchorX, half + 8),
+    (typeof window !== "undefined" ? window.innerWidth : 9999) - half - 8,
+  );
+  const top = Math.max(anchorY - 12, 8);
+  const [year, monthNum] = month.split("-");
+  const monthLabel = `${MONTH_LABELS[parseInt(monthNum, 10) - 1]} ${year}`;
+  const node = (
+    <div
+      style={{
+        position: "fixed",
+        left,
+        top,
+        transform: "translate(-50%, -100%)",
+        pointerEvents: "none",
+        background: "var(--ink-900)",
+        color: "var(--parchment-50)",
+        borderRadius: 8,
+        padding: "10px 12px",
+        fontSize: 12,
+        lineHeight: 1.4,
+        boxShadow: "var(--shadow-lg)",
+        zIndex: 1000,
+        width: tooltipWidth,
+      }}
+    >
+      <div style={{ fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+        {keyword}
+      </div>
+      <div style={{ marginTop: 4, fontFamily: "var(--font-mono)" }}>
+        <span style={{ opacity: 0.7 }}>{monthLabel} </span>
+        {mode === "quantity"
+          ? `${Math.round(monthValue)} sold`
+          : money(monthValue)}
+      </div>
+    </div>
+  );
+  return createPortal(node, document.body);
 }
 
 // Thumbnail for a design.
@@ -2300,8 +3756,29 @@ function Conversion({
   );
 }
 
-function DayHourHeatmapCard({ heatmap }: { heatmap: DayHourHeatmap }) {
-  if (heatmap.totalSales === 0) return null;
+function DayHourHeatmapCard({ events }: { events: HeatmapEvent[] }) {
+  // Bucket on the client so day/hour reflect the viewer's local
+  // timezone. Server data is UTC ISO, `Date` parses that fine, and
+  // `getDay/getHours` return values in the browser's local tz — DST
+  // shifts included, since each event is converted independently.
+  const { matrix, max, total } = useMemo(() => {
+    const m: number[][] = Array.from({ length: 7 }, () => new Array(24).fill(0));
+    let mx = 0;
+    let n = 0;
+    for (const e of events) {
+      const d = new Date(e.sold_at);
+      if (Number.isNaN(d.getTime())) continue;
+      const day = d.getDay();
+      const hour = d.getHours();
+      m[day][hour] += e.amount;
+      n++;
+    }
+    for (const row of m) for (const v of row) if (v > mx) mx = v;
+    return { matrix: m, max: mx, total: n };
+  }, [events]);
+
+  const tzLabel = useMemo(() => formatTimezoneLabel(), []);
+  if (total === 0) return null;
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   return (
     <div className="s-card" style={{ padding: "var(--space-4)" }}>
@@ -2311,6 +3788,8 @@ function DayHourHeatmapCard({ heatmap }: { heatmap: DayHourHeatmap }) {
           alignItems: "baseline",
           justifyContent: "space-between",
           marginBottom: "var(--space-3)",
+          gap: "var(--space-3)",
+          flexWrap: "wrap",
         }}
       >
         <h2
@@ -2322,9 +3801,20 @@ function DayHourHeatmapCard({ heatmap }: { heatmap: DayHourHeatmap }) {
           }}
         >
           When do sales happen
+          <span
+            style={{
+              color: "var(--ink-500)",
+              fontFamily: "var(--font-body)",
+              fontWeight: 400,
+              fontSize: 13,
+              marginLeft: 8,
+            }}
+          >
+            your local time · {tzLabel}
+          </span>
         </h2>
         <span style={{ fontSize: 12, color: "var(--ink-500)" }}>
-          UTC · darker = more $
+          darker = more $
         </span>
       </div>
       <div style={{ overflowX: "auto" }}>
@@ -2347,15 +3837,16 @@ function DayHourHeatmapCard({ heatmap }: { heatmap: DayHourHeatmap }) {
                 fontFamily: "var(--font-mono)",
               }}
             >
-              {h % 3 === 0 ? h : ""}
+              {h}
             </div>
           ))}
           {days.map((label, dayIdx) => (
             <RowFragment
               key={label}
               label={label}
-              row={heatmap.matrix[dayIdx]}
-              max={heatmap.max}
+              row={matrix[dayIdx]}
+              max={max}
+              tzLabel={tzLabel}
             />
           ))}
         </div>
@@ -2364,14 +3855,33 @@ function DayHourHeatmapCard({ heatmap }: { heatmap: DayHourHeatmap }) {
   );
 }
 
+// Short human-readable label for the viewer's timezone, e.g.
+// "America/Los_Angeles (PDT)" — or just the IANA name if the short
+// abbreviation isn't available. Runs client-side only.
+function formatTimezoneLabel(): string {
+  if (typeof Intl === "undefined") return "";
+  const iana = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZoneName: "short",
+    }).formatToParts(new Date());
+    const abbr = parts.find((p) => p.type === "timeZoneName")?.value;
+    return abbr ? `${iana} (${abbr})` : iana;
+  } catch {
+    return iana;
+  }
+}
+
 function RowFragment({
   label,
   row,
   max,
+  tzLabel,
 }: {
   label: string;
   row: number[];
   max: number;
+  tzLabel: string;
 }) {
   return (
     <>
@@ -2391,7 +3901,7 @@ function RowFragment({
         return (
           <div
             key={h}
-            title={`${label} ${h}:00 UTC · ${v > 0 ? money(v) : "no sales"}`}
+            title={`${label} ${h}:00 ${tzLabel} · ${v > 0 ? money(v) : "no sales"}`}
             style={{
               height: 22,
               borderRadius: 3,

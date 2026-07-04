@@ -158,19 +158,29 @@ async function refreshSoldKeywords(
     frequency: number | null;
   }[],
 ): Promise<void> {
+  // Pull sales with the design title so we can tokenize titles too — a
+  // discoverable word in a title still helps sell the design even if
+  // scraping hasn't found the Spoonflower tags yet.
   const { data: soldEvents } = await supabase
     .from("sales_events")
-    .select("design_id")
+    .select("design_id, design_title")
     .eq("user_id", userId)
     .eq("type", "sale")
     .not("design_id", "is", null);
 
   const salesPerDesign = new Map<number, number>();
-  for (const s of (soldEvents ?? []) as { design_id: number }[]) {
+  const titleByDesign = new Map<number, string>();
+  for (const s of (soldEvents ?? []) as {
+    design_id: number;
+    design_title: string | null;
+  }[]) {
     salesPerDesign.set(
       s.design_id,
       (salesPerDesign.get(s.design_id) ?? 0) + 1,
     );
+    if (s.design_title && !titleByDesign.has(s.design_id)) {
+      titleByDesign.set(s.design_id, s.design_title);
+    }
   }
   if (salesPerDesign.size === 0) return;
 
@@ -179,35 +189,18 @@ async function refreshSoldKeywords(
     .select("design_id, tags")
     .in("design_id", Array.from(salesPerDesign.keys()));
 
-  const tokenCounts = new Map<string, number>();
+  const tagsByDesign = new Map<number, string[]>();
   for (const d of (designTags ?? []) as {
     design_id: number;
     tags: string[] | null;
   }[]) {
-    if (!d.tags?.length) continue;
-    const saleCount = salesPerDesign.get(d.design_id) ?? 0;
-    if (!saleCount) continue;
-    // Dedup tokens within THIS design so a single sale never adds the
-    // same token twice — matches the user's rule that a word is a single
-    // token and multi-word tags split on whitespace.
-    const tokens = new Set<string>();
-    for (const phrase of d.tags) {
-      for (const t of phrase.trim().toLowerCase().split(/\s+/)) {
-        const tok = t.trim();
-        if (tok.length >= 2) tokens.add(tok);
-      }
-    }
-    for (const tok of tokens) {
-      tokenCounts.set(tok, (tokenCounts.get(tok) ?? 0) + saleCount);
-    }
+    if (d.tags?.length) tagsByDesign.set(d.design_id, d.tags);
   }
-  if (tokenCounts.size === 0) return;
 
-  // Existing words: keep whatever category the user set, and NEVER
-  // re-insert a word the user has explicitly removed (hidden=true).
-  // We fetch the full set (including hidden) so hidden rows also
-  // suppress reinsertion — the caller passed us only non-hidden rows,
-  // so we need a fresh query here.
+  // Fetch existing words BEFORE tokenizing so we can extract user-defined
+  // phrases (words with hyphens). Phrases drive multi-word matching in
+  // the tokenizer — e.g. "block-print" makes the tag "block print" emit
+  // as one token instead of two.
   const { data: allExisting } = await supabase
     .from("user_keywords")
     .select("word, category, frequency, hidden")
@@ -216,6 +209,7 @@ async function refreshSoldKeywords(
     string,
     { category: string | null; frequency: number | null; hidden: boolean }
   >();
+  const phrases: string[] = [];
   for (const r of (allExisting ?? []) as {
     word: string;
     category: string | null;
@@ -223,7 +217,39 @@ async function refreshSoldKeywords(
     hidden: boolean;
   }[]) {
     existingByWord.set(r.word.toLowerCase(), r);
+    // Include hidden phrases too — user marked them dead, but the phrase
+    // still needs to fold constituents to avoid re-adding them as
+    // separate sold pills. Just don't emit the phrase itself.
+    if (r.word.includes("-")) phrases.push(r.word.toLowerCase());
   }
+  const hiddenSet = new Set(
+    (allExisting ?? [])
+      .filter((r: { hidden: boolean }) => r.hidden)
+      .map((r: { word: string }) => r.word.toLowerCase()),
+  );
+
+  const tokenCounts = new Map<string, number>();
+  for (const [designId, saleCount] of salesPerDesign) {
+    // Tokenize both tags AND the design title. SKU tokens (zab*) are
+    // stripped. Multi-word user phrases (e.g. "block-print") collapse
+    // matching runs so constituent words don't get double-counted.
+    // A design with no scraped tags yet still contributes title tokens
+    // so the Sold heatmap fills in immediately after CSV upload rather
+    // than waiting on scrape completion.
+    const tokens = extractTokensFromTitleAndTags(
+      tagsByDesign.get(designId),
+      titleByDesign.get(designId) ?? null,
+      phrases,
+    );
+    if (tokens.size === 0) continue;
+    for (const tok of tokens) {
+      // Skip phrase emissions the user has hidden — they don't want the
+      // merged pill either, so respect that.
+      if (hiddenSet.has(tok)) continue;
+      tokenCounts.set(tok, (tokenCounts.get(tok) ?? 0) + saleCount);
+    }
+  }
+  if (tokenCounts.size === 0) return;
 
   const rowsToUpsert: {
     user_id: string;
@@ -278,6 +304,52 @@ async function refreshSoldKeywords(
       console.error("[refreshSoldKeywords] upsert failed", error);
     }
   }
+}
+
+// Extract discoverability tokens for a design, drawing from BOTH the
+// Spoonflower tags AND the design title. SKU codes like `ZAB25024` are
+// stripped since they're internal identifiers, not real keywords.
+// `phrases` are user-defined hyphenated tokens (e.g. "block-print") —
+// any tag/title span matching the phrase (hyphenated OR space-separated)
+// is folded into one emitted phrase token and its constituent single
+// tokens are NOT emitted. Keep in sync with extractSaleTokens() in
+// app/analytics/stats.ts — same rule, different call site.
+function extractTokensFromTitleAndTags(
+  tags: string[] | undefined,
+  title: string | null,
+  phrases: string[] = [],
+): Set<string> {
+  const tokens = new Set<string>();
+  const sources: string[] = [];
+  if (tags?.length) sources.push(...tags);
+  if (title) sources.push(title);
+  const sortedPhrases = [...phrases].sort((a, b) => b.length - a.length);
+  for (const phrase of sources) {
+    let text = phrase.trim().toLowerCase();
+    for (const p of sortedPhrases) {
+      const hy = p.toLowerCase();
+      const sp = hy.replace(/-/g, " ");
+      const pattern = new RegExp(
+        `\\b(?:${escapeRegExp(sp)}|${escapeRegExp(hy)})\\b`,
+        "g",
+      );
+      text = text.replace(pattern, () => {
+        tokens.add(hy);
+        return " ";
+      });
+    }
+    for (const t of text.split(/\s+/)) {
+      const tok = t.trim();
+      if (tok.length < 2) continue;
+      if (/^zab[a-z0-9]*$/i.test(tok)) continue;
+      tokens.add(tok);
+    }
+  }
+  return tokens;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function displayNameFromEmail(email: string): string {

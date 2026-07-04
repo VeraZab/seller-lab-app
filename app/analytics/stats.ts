@@ -16,6 +16,17 @@ export type SalesRow = {
   balance: number | null;
 };
 
+// A personal-purchase event: the seller spent their own Spoondollar
+// balance on a Spoonflower order. Types are "debit" in our normalized
+// vocabulary; they show up in the CSV so the running balance in the
+// export math reconciles.
+export type MyPurchasesSummary = {
+  total: number;
+  count: number;
+  firstAt: string | null;
+  lastAt: string | null;
+};
+
 export type Headline = {
   grossRevenue: number;
   refundsTotal: number; // absolute value of refund $
@@ -86,6 +97,359 @@ export type DailyPoint = {
   qty: number;
 };
 
+// Year-over-year monthly series — one entry per year the seller has
+// activity, each with 12 months of aggregated net revenue / sale count /
+// quantity. Powers the year-over-year overlay chart on /analytics so a
+// seller can see whether "March this year" is stronger than "March last
+// year". Any month without sales is 0.
+export type YearlySeries = {
+  year: number;
+  monthlyNet: number[]; // 12 entries, Jan..Dec
+  monthlyCount: number[];
+  monthlyQty: number[];
+  totalNet: number;
+};
+
+// Monthly time series for the top N designs. Buckets are keyed by
+// YYYY-MM so the chart can lay them out along a shared timeline.
+// Includes a wallpaper/fabric/decor mix percentage per design so the
+// hover tooltip can show what kind of product each line represents.
+export type DesignMonthlySeries = {
+  design_id: number;
+  design_title: string;
+  totalNet: number;
+  totalSales: number;
+  totalQty: number;
+  // Product-mix breakdown by NET revenue.
+  wallpaperPct: number;
+  fabricPct: number;
+  decorPct: number;
+  // Monthly net revenue keyed by YYYY-MM. Missing months = 0.
+  monthly: Record<string, number>;
+  // Monthly quantity keyed by YYYY-MM. Missing months = 0.
+  monthlyQty: Record<string, number>;
+};
+
+export function computeTopDesignsMonthly(
+  allRows: SalesRow[],
+  topN: number = 10,
+): { series: DesignMonthlySeries[]; months: string[] } {
+  const rows = allRows.filter(isAnalyticsEvent);
+
+  // First pass: aggregate net per design + mix + monthly buckets.
+  const byDesign = new Map<
+    number,
+    {
+      title: string;
+      totalNet: number;
+      totalSales: number;
+      totalQty: number;
+      wallpaperNet: number;
+      fabricNet: number;
+      decorNet: number;
+      monthly: Map<string, number>;
+      monthlyQty: Map<string, number>;
+    }
+  >();
+  const allMonthKeys = new Set<string>();
+
+  for (const r of rows) {
+    if (!r.design_id) continue;
+    const d = new Date(r.sold_at);
+    if (Number.isNaN(d.getTime())) continue;
+    const monthKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    allMonthKeys.add(monthKey);
+    const entry = byDesign.get(r.design_id) ?? {
+      title: r.design_title ?? "Untitled",
+      totalNet: 0,
+      totalSales: 0,
+      totalQty: 0,
+      wallpaperNet: 0,
+      fabricNet: 0,
+      decorNet: 0,
+      monthly: new Map<string, number>(),
+      monthlyQty: new Map<string, number>(),
+    };
+    if (r.design_title) entry.title = r.design_title;
+    const signedAmount = isRefund(r) ? -Math.abs(r.amount) : r.amount;
+    entry.totalNet += signedAmount;
+    entry.monthly.set(
+      monthKey,
+      (entry.monthly.get(monthKey) ?? 0) + signedAmount,
+    );
+    if (!isRefund(r) && r.type === "sale") {
+      entry.totalSales++;
+      entry.totalQty += r.qty;
+      entry.monthlyQty.set(
+        monthKey,
+        (entry.monthlyQty.get(monthKey) ?? 0) + r.qty,
+      );
+    }
+    // Attribute the net to a product category bucket for the mix pct.
+    const category = classifyProductCategory(r.size, r.substrate);
+    if (category === "Wallpaper") entry.wallpaperNet += signedAmount;
+    else if (category === "Fabric") entry.fabricNet += signedAmount;
+    else entry.decorNet += signedAmount;
+    byDesign.set(r.design_id, entry);
+  }
+
+  // Sort months chronologically for X-axis layout.
+  const months = Array.from(allMonthKeys).sort();
+
+  // Materialize the aggregation, then rank. Return the UNION of the
+  // top-N by revenue AND top-N by qty so the client can re-rank on the
+  // fly when the user toggles between $ and qty modes — otherwise a
+  // design with modest revenue but a huge qty (fat-quarter volume) would
+  // vanish in qty view.
+  const all = Array.from(byDesign.entries()).map(([design_id, e]) => {
+    const totalNet = round2(e.totalNet);
+    const totalAttribution = Math.max(
+      1,
+      e.wallpaperNet + e.fabricNet + e.decorNet,
+    );
+    const monthly: Record<string, number> = {};
+    const monthlyQty: Record<string, number> = {};
+    for (const m of months) {
+      monthly[m] = round2(e.monthly.get(m) ?? 0);
+      monthlyQty[m] = e.monthlyQty.get(m) ?? 0;
+    }
+    return {
+      design_id,
+      design_title: e.title,
+      totalNet,
+      totalSales: e.totalSales,
+      totalQty: e.totalQty,
+      wallpaperPct: round2((e.wallpaperNet / totalAttribution) * 100),
+      fabricPct: round2((e.fabricNet / totalAttribution) * 100),
+      decorPct: round2((e.decorNet / totalAttribution) * 100),
+      monthly,
+      monthlyQty,
+    };
+  });
+  const topByRev = [...all]
+    .sort((a, b) => b.totalNet - a.totalNet)
+    .slice(0, topN);
+  const topByQty = [...all]
+    .sort((a, b) => b.totalQty - a.totalQty)
+    .slice(0, topN);
+  const idSet = new Set<number>();
+  const ranked: DesignMonthlySeries[] = [];
+  for (const d of [...topByRev, ...topByQty]) {
+    if (idSet.has(d.design_id)) continue;
+    idSet.add(d.design_id);
+    ranked.push(d);
+  }
+
+  return { series: ranked, months };
+}
+
+// Per-keyword monthly time series — top N tags on the user's sold
+// designs, ranked by revenue (or qty in qty mode).
+//
+// Attribution rule: each sale's FULL net + FULL qty are credited to
+// every one of the design's tokens. A $10 sale on a design tagged
+// with 5 words contributes $10 to each of those 5 tokens (not $2).
+// Reads as "revenue/qty on sales featuring this keyword" — the
+// downside is that summing keyword totals exceeds actual revenue/qty
+// (each sale counted once per token). We chose this because it maps
+// to how humans think about a keyword ("how much money did designs
+// with 'block-print' bring in?") rather than a strict accounting split.
+export type KeywordMonthlySeries = {
+  keyword: string;
+  totalNet: number;
+  totalQty: number;
+  monthly: Record<string, number>;
+  monthlyQty: Record<string, number>;
+};
+
+// Extract discoverability tokens for a sale, drawing from BOTH the
+// Spoonflower tags for the design AND the design title itself. The
+// merged set represents the "keywords likely helping this design get
+// found." SKU codes like ZAB25024 are stripped since they're internal
+// identifiers, not real keywords.
+//
+// `phrases` are user-defined multi-word tokens saved with hyphens as
+// separators (e.g. "block-print"). Any tag/title that contains the
+// phrase — either hyphenated OR space-separated — emits the phrase
+// as ONE token and does NOT emit the constituent single tokens for
+// that appearance. Longest phrases win when they overlap.
+function extractSaleTokens(
+  designTags: string[] | undefined,
+  designTitle: string | null,
+  phrases: string[] = [],
+): Set<string> {
+  const tokens = new Set<string>();
+  const sources: string[] = [];
+  if (designTags?.length) sources.push(...designTags);
+  if (designTitle) sources.push(designTitle);
+  const sortedPhrases = [...phrases].sort((a, b) => b.length - a.length);
+  for (const phrase of sources) {
+    let text = phrase.trim().toLowerCase();
+    for (const p of sortedPhrases) {
+      const hy = p.toLowerCase();
+      const sp = hy.replace(/-/g, " ");
+      const pattern = new RegExp(
+        `\\b(?:${escapeRegExp(sp)}|${escapeRegExp(hy)})\\b`,
+        "g",
+      );
+      text = text.replace(pattern, () => {
+        tokens.add(hy);
+        return " ";
+      });
+    }
+    for (const t of text.split(/\s+/)) {
+      const tok = t.trim();
+      if (tok.length < 2) continue;
+      // Strip SKU codes: any token starting with `zab` followed by
+      // alphanumerics (ZAB25024, zab25045, etc.). Real English words
+      // don't start with `zab`, so this doesn't false-positive.
+      if (/^zab[a-z0-9]*$/i.test(tok)) continue;
+      tokens.add(tok);
+    }
+  }
+  return tokens;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function computeTopKeywordsMonthly(
+  allRows: SalesRow[],
+  tagsByDesign: Map<number, string[]>,
+  topN: number = 10,
+  phrases: string[] = [],
+  hiddenWords: Set<string> = new Set(),
+): { series: KeywordMonthlySeries[]; months: string[] } {
+  const rows = allRows.filter(isAnalyticsEvent);
+  // Cache latest title per design_id from the sales rows so we don't
+  // read the title N times for the same design.
+  const titleByDesign = new Map<number, string>();
+  for (const r of rows) {
+    if (r.design_id && r.design_title && !titleByDesign.has(r.design_id)) {
+      titleByDesign.set(r.design_id, r.design_title);
+    }
+  }
+  const byKeyword = new Map<string, Map<string, number>>();
+  const byKeywordQty = new Map<string, Map<string, number>>();
+  const totalByKeyword = new Map<string, number>();
+  const totalQtyByKeyword = new Map<string, number>();
+  const allMonthKeys = new Set<string>();
+  for (const r of rows) {
+    if (!r.design_id) continue;
+    const tags = tagsByDesign.get(r.design_id);
+    const title = titleByDesign.get(r.design_id) ?? r.design_title ?? null;
+    // Include a sale even if we don't have scraped tags yet — the title
+    // alone still contributes tokens. This means the leaderboard fills
+    // in immediately after CSV upload rather than waiting on scrapes.
+    const rawTokens = extractSaleTokens(tags, title, phrases);
+    // Strip user-hidden tokens before attribution. Hiding "new" or "the"
+    // in the workspace library means "not a real keyword" — the analytics
+    // chart should reflect that same judgement. Hidden tokens don't
+    // receive any credit and don't reduce credit given to survivors.
+    const tokens = new Set<string>();
+    for (const t of rawTokens) if (!hiddenWords.has(t)) tokens.add(t);
+    if (tokens.size === 0) continue;
+    const d = new Date(r.sold_at);
+    if (Number.isNaN(d.getTime())) continue;
+    const monthKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+    allMonthKeys.add(monthKey);
+    const signed = isRefund(r) ? -Math.abs(r.amount) : r.amount;
+    // Whole-value attribution: every token on this design gets the full
+    // sale $ and full qty. Keyword totals will exceed actual revenue/qty
+    // by design — the number answers "revenue on sales featuring this
+    // keyword", not "share of revenue owed to this keyword".
+    const perToken = signed;
+    const qtyPerToken =
+      !isRefund(r) && r.type === "sale" ? r.qty : 0;
+    for (const tok of tokens) {
+      const monthly = byKeyword.get(tok) ?? new Map<string, number>();
+      monthly.set(monthKey, (monthly.get(monthKey) ?? 0) + perToken);
+      byKeyword.set(tok, monthly);
+      totalByKeyword.set(tok, (totalByKeyword.get(tok) ?? 0) + perToken);
+      if (qtyPerToken > 0) {
+        const monthlyQ = byKeywordQty.get(tok) ?? new Map<string, number>();
+        monthlyQ.set(monthKey, (monthlyQ.get(monthKey) ?? 0) + qtyPerToken);
+        byKeywordQty.set(tok, monthlyQ);
+        totalQtyByKeyword.set(
+          tok,
+          (totalQtyByKeyword.get(tok) ?? 0) + qtyPerToken,
+        );
+      }
+    }
+  }
+  const months = Array.from(allMonthKeys).sort();
+  // Union of top-N by revenue AND top-N by qty. When the client toggles
+  // between $ and qty modes it re-sorts and re-slices this superset —
+  // otherwise a keyword that ranks top-20 by qty but bottom-30 by revenue
+  // would silently drop out of view in qty mode.
+  const topByRev = Array.from(totalByKeyword.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([k]) => k);
+  const topByQty = Array.from(totalQtyByKeyword.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([k]) => k);
+  const keywords = Array.from(new Set([...topByRev, ...topByQty]));
+  const ranked = keywords.map((keyword) => {
+    const monthlyMap = byKeyword.get(keyword) ?? new Map<string, number>();
+    const monthlyQtyMap =
+      byKeywordQty.get(keyword) ?? new Map<string, number>();
+    const monthly: Record<string, number> = {};
+    const monthlyQty: Record<string, number> = {};
+    for (const m of months) {
+      monthly[m] = round2(monthlyMap.get(m) ?? 0);
+      monthlyQty[m] = round2(monthlyQtyMap.get(m) ?? 0);
+    }
+    return {
+      keyword,
+      totalNet: round2(totalByKeyword.get(keyword) ?? 0),
+      totalQty: round2(totalQtyByKeyword.get(keyword) ?? 0),
+      monthly,
+      monthlyQty,
+    };
+  });
+  return { series: ranked, months };
+}
+
+export function computeYearly(allRows: SalesRow[]): YearlySeries[] {
+  const rows = allRows.filter(isAnalyticsEvent);
+  const byYear = new Map<
+    number,
+    { net: number[]; count: number[]; qty: number[]; total: number }
+  >();
+  for (const r of rows) {
+    const d = new Date(r.sold_at);
+    if (Number.isNaN(d.getTime())) continue;
+    const year = d.getUTCFullYear();
+    const month = d.getUTCMonth();
+    const bucket = byYear.get(year) ?? {
+      net: new Array(12).fill(0),
+      count: new Array(12).fill(0),
+      qty: new Array(12).fill(0),
+      total: 0,
+    };
+    if (isRefund(r)) {
+      bucket.net[month] -= Math.abs(r.amount);
+      bucket.total -= Math.abs(r.amount);
+    } else {
+      bucket.net[month] += r.amount;
+      bucket.count[month] += 1;
+      bucket.qty[month] += r.qty;
+      bucket.total += r.amount;
+    }
+    byYear.set(year, bucket);
+  }
+  return Array.from(byYear, ([year, v]) => ({
+    year,
+    monthlyNet: v.net.map(round2),
+    monthlyCount: v.count,
+    monthlyQty: v.qty,
+    totalNet: round2(v.total),
+  })).sort((a, b) => a.year - b.year);
+}
+
 const GUEST_HANDLES = new Set([
   "guest",
   "guest_user",
@@ -131,6 +495,25 @@ function isAnalyticsEvent(r: SalesRow): boolean {
 // non-customer events (debit, adjustment) can also be negative.
 function isRefund(r: SalesRow): boolean {
   return r.type === "refund";
+}
+
+// Sum up your own Spoonflower purchases (debit rows) so the analytics
+// page can surface a "my purchases" KPI alongside sales revenue —
+// otherwise the "why doesn't this match my Spoonflower dashboard?"
+// question always resurfaces.
+export function computeMyPurchases(allRows: SalesRow[]): MyPurchasesSummary {
+  let total = 0;
+  let count = 0;
+  let firstAt: string | null = null;
+  let lastAt: string | null = null;
+  for (const r of allRows) {
+    if (r.type !== "debit") continue;
+    total += Math.abs(r.amount);
+    count++;
+    if (firstAt == null || r.sold_at < firstAt) firstAt = r.sold_at;
+    if (lastAt == null || r.sold_at > lastAt) lastAt = r.sold_at;
+  }
+  return { total: round2(total), count, firstAt, lastAt };
 }
 
 // A "sample" is anything Spoonflower sells to let a buyer test the design
@@ -234,35 +617,20 @@ export function computeHeadline(allRows: SalesRow[]): Headline {
 // so the day-of-week + hour-of-day heatmap has a single source. Returns
 // 7 arrays of 24 numbers each: dayHour[day][hour] = net revenue on that
 // slot.
-export type DayHourHeatmap = {
-  matrix: number[][]; // [day][hour], both in UTC
-  max: number;
-  totalSales: number;
-};
+// Raw event list the client uses to build the day/hour heatmap in the
+// viewer's local timezone. We can't bucket server-side because we don't
+// know the viewer's tz here — and even if we did, per-event conversion
+// with DST is easier client-side using the browser's own Intl/Date.
+export type HeatmapEvent = { sold_at: string; amount: number };
 
-export function computeDayHourHeatmap(allRows: SalesRow[]): DayHourHeatmap {
-  const rows = allRows.filter(isAnalyticsEvent);
-  const matrix: number[][] = Array.from({ length: 7 }, () =>
-    new Array(24).fill(0),
-  );
-  let totalSales = 0;
-  for (const r of rows) {
+export function collectHeatmapEvents(allRows: SalesRow[]): HeatmapEvent[] {
+  const events: HeatmapEvent[] = [];
+  for (const r of allRows) {
+    if (!isAnalyticsEvent(r)) continue;
     if (isRefund(r)) continue;
-    const d = new Date(r.sold_at);
-    if (Number.isNaN(d.getTime())) continue;
-    const day = d.getUTCDay();
-    const hour = d.getUTCHours();
-    matrix[day][hour] += r.amount;
-    totalSales++;
+    events.push({ sold_at: r.sold_at, amount: r.amount });
   }
-  let max = 0;
-  for (const row of matrix)
-    for (const v of row) if (v > max) max = v;
-  return {
-    matrix: matrix.map((row) => row.map((v) => round2(v))),
-    max: round2(max),
-    totalSales,
-  };
+  return events;
 }
 
 export function computeDaily(allRows: SalesRow[]): DailyPoint[] {

@@ -5,14 +5,18 @@ import { uploadSales } from "./actions";
 import {
   computeConversion,
   computeCustomers,
+  collectHeatmapEvents,
   computeDaily,
-  computeDayHourHeatmap,
   computeHeadline,
   computeMostRefunded,
+  computeMyPurchases,
   computeProductCategoryBreakdown,
   computeSizeBreakdown,
   computeSubstrateBreakdown,
   computeTopDesigns,
+  computeTopDesignsMonthly,
+  computeTopKeywordsMonthly,
+  computeYearly,
   type SalesRow,
 } from "./stats";
 
@@ -55,24 +59,18 @@ export default async function AnalyticsPage() {
 
   const rows = (raw ?? []) as SalesRow[];
 
+  // Sale-range summary for the sync badge. Rows come sorted desc by
+  // sold_at, so [0] is latest and [last] is earliest. Skip if empty.
+  const earliestSaleAt = rows.length ? rows[rows.length - 1].sold_at : null;
+  const latestSaleAt = rows.length ? rows[0].sold_at : null;
+  const totalSaleEvents = rows.length;
+
   const email = user.email ?? "";
   const displayName = displayNameFromEmail(email);
   const initial = (displayName[0] ?? "?").toUpperCase();
 
-  const stats = rows.length
-    ? {
-        headline: computeHeadline(rows),
-        daily: computeDaily(rows),
-        topDesigns: computeTopDesigns(rows),
-        mostRefunded: computeMostRefunded(rows),
-        substrate: computeSubstrateBreakdown(rows),
-        size: computeSizeBreakdown(rows),
-        productCategory: computeProductCategoryBreakdown(rows),
-        customers: computeCustomers(rows),
-        conversion: computeConversion(rows),
-        heatmap: computeDayHourHeatmap(rows),
-      }
-    : null;
+  // (stats computed later, after tagsByDesign is loaded — the top-10
+  // keywords chart needs per-design tag lists.)
 
   // Per-design transaction history — powers the design-detail modal on
   // the analytics page. We send a compact projection of every event so
@@ -109,7 +107,7 @@ export default async function AnalyticsPage() {
     uniqueIds.length > 0
       ? await supabase
           .from("spoonflower_designs")
-          .select("design_id, image_cached_at")
+          .select("design_id, image_cached_at, tags")
           .in("design_id", uniqueIds)
       : { data: [] };
   const cachedIds = new Set(
@@ -120,7 +118,61 @@ export default async function AnalyticsPage() {
       .filter((d) => !!d.image_cached_at)
       .map((d) => d.design_id),
   );
+  const tagsByDesign = new Map<number, string[]>();
+  for (const d of (designCache ?? []) as {
+    design_id: number;
+    tags: string[] | null;
+  }[]) {
+    if (d.tags && d.tags.length > 0) tagsByDesign.set(d.design_id, d.tags);
+  }
+  // User's saved keyword library — drives two behaviors in the analytics
+  // tokenizer:
+  //   1. Multi-word phrases (words containing "-") are folded so tags
+  //      like "block print" count as one merged token `block-print`.
+  //   2. Hidden words (soft-deleted from the workspace) are stripped
+  //      from attribution — e.g. "new" or "the" removed from the library
+  //      also drop out of the Top-20 keywords chart.
+  const { data: keywordRows } = await supabase
+    .from("user_keywords")
+    .select("word, hidden")
+    .eq("user_id", user.id);
+  const phrases: string[] = [];
+  const hiddenWords = new Set<string>();
+  for (const r of (keywordRows ?? []) as { word: string; hidden: boolean }[]) {
+    const w = r.word.toLowerCase();
+    if (r.hidden) hiddenWords.add(w);
+    // Include ALL hyphenated words (even hidden) so hidden phrases still
+    // fold their constituents — otherwise hiding "block-print" would leak
+    // "block" and "print" back into the chart as separate tokens. The
+    // folded phrase itself is then dropped via the hiddenWords filter.
+    if (w.includes("-")) phrases.push(w);
+  }
   const supabasePublicBase = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+
+  const stats = rows.length
+    ? {
+        headline: computeHeadline(rows),
+        myPurchases: computeMyPurchases(rows),
+        daily: computeDaily(rows),
+        topDesigns: computeTopDesigns(rows),
+        mostRefunded: computeMostRefunded(rows),
+        substrate: computeSubstrateBreakdown(rows),
+        size: computeSizeBreakdown(rows),
+        productCategory: computeProductCategoryBreakdown(rows),
+        customers: computeCustomers(rows),
+        conversion: computeConversion(rows),
+        heatmapEvents: collectHeatmapEvents(rows),
+        yearly: computeYearly(rows),
+        topDesignsMonthly: computeTopDesignsMonthly(rows, 10),
+        topKeywordsMonthly: computeTopKeywordsMonthly(
+          rows,
+          tagsByDesign,
+          20,
+          phrases,
+          hiddenWords,
+        ),
+      }
+    : null;
 
   return (
     <AnalyticsClient
@@ -136,6 +188,11 @@ export default async function AnalyticsPage() {
       uncachedDesignIds={uniqueIds.filter((id) => !cachedIds.has(id))}
       storageUrlBase={`${supabasePublicBase}/storage/v1/object/public/design-images`}
       historyByDesign={historyByDesign}
+      syncSummary={{
+        earliestSaleAt,
+        latestSaleAt,
+        totalSaleEvents,
+      }}
     />
   );
 }
