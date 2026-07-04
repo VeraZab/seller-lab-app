@@ -868,7 +868,7 @@ const WordPill = memo(function WordPill({
           type="button"
           onClick={() => !disabled && setEditing(true)}
           disabled={disabled}
-          title="Click to edit"
+          title={pillHoverLabel(category, frequency)}
           style={{
             background: "transparent",
             border: "none",
@@ -905,6 +905,20 @@ const WordPill = memo(function WordPill({
     </span>
   );
 });
+
+// Native-tooltip content for a pill's word button. Sold-category words
+// show the sale count (their `frequency` IS the sold-designs count via
+// refreshSoldKeywords). Everything else falls back to the edit hint.
+function pillHoverLabel(category: string | null, frequency: number): string {
+  const suffix = " — click to edit";
+  if (category === CATEGORY.SOLD) {
+    return `Sold on ${frequency} design${frequency === 1 ? "" : "s"}${suffix}`;
+  }
+  if (category === CATEGORY.LIKED) {
+    return `Favorited ${frequency} time${frequency === 1 ? "" : "s"}${suffix}`;
+  }
+  return `Click to edit`;
+}
 
 function PillIconButton({
   children,

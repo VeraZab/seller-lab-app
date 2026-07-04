@@ -1285,6 +1285,20 @@ function HeadlineSection({
         conversion={bundle.conversion}
         myPurchases={bundle.myPurchases}
       />
+      <p
+        style={{
+          margin: 0,
+          fontSize: 11,
+          color: "var(--ink-500)",
+          lineHeight: 1.4,
+        }}
+      >
+        Net revenue may differ from Spoonflower&rsquo;s dashboard by a few
+        cents. Their &ldquo;Total Earned From Sales&rdquo; sums pre-rounded
+        internal earnings; the CSV export rounds each row to cents before
+        we see it, so tiny rounding biases accumulate. Not a bug on either
+        side &mdash; the same reality at slightly different precisions.
+      </p>
     </div>
   );
 }
@@ -1514,15 +1528,68 @@ const MONTH_LABELS = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+// Placeholder card used when a filtered chart has no data. Keeps the
+// section header visible so the user isn't confused about a chart
+// silently vanishing, and offers a one-click reset back to All years.
+function ChartEmptyCard({
+  title,
+  message,
+  onReset,
+}: {
+  title: string;
+  message: string;
+  onReset?: () => void;
+}) {
+  return (
+    <div
+      className="s-card"
+      style={{
+        padding: "var(--space-4)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "var(--space-3)",
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <h2
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+            margin: 0,
+          }}
+        >
+          {title}
+        </h2>
+        <span style={{ color: "var(--ink-500)", fontSize: 13 }}>{message}</span>
+      </div>
+      {onReset && (
+        <button
+          type="button"
+          className="btn btn--xs"
+          onClick={onReset}
+        >
+          Reset to All years
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Year-over-year monthly chart. One line per year, months on the X axis.
 // Buttons toggle which year is "isolated" (highlighted, others dimmed).
 // Y-axis auto-scales with nice round tick values.
 function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
   const [mode, setMode] = useState<ChartMode>("revenue");
+  const [layout, setLayout] = useState<"stacked" | "continuous">("stacked");
   const [isolatedYear, setIsolatedYear] = useState<number | null>(null);
   const [hover, setHover] = useState<{ year: number; month: number } | null>(
     null,
   );
+
+  useEffect(() => setHover(null), [layout, mode, isolatedYear]);
 
   const width = 1080;
   const height = 240;
@@ -1557,24 +1624,84 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
     ? Math.max(...seriesToShow.map((s) => monthsFor(s.year)))
     : 12;
 
-  const rawMax = Math.max(
-    1,
-    ...seriesToShow.flatMap((s) =>
-      Array.from({ length: monthsFor(s.year) }, (_, m) => valueOf(s, m)),
-    ),
-  );
+  // Continuous-layout data: one point per month across the whole span,
+  // leading empty months trimmed so a user who started in March isn't
+  // shown a flat $0 line for Jan/Feb.
+  type ContinuousPoint = {
+    year: number;
+    month: number;
+    net: number;
+    qty: number;
+    monthKey: string;
+  };
+  const continuousPoints = useMemo<ContinuousPoint[]>(() => {
+    if (layout !== "continuous") return [];
+    const source = isolatedYear != null
+      ? yearly.filter((y) => y.year === isolatedYear)
+      : yearly;
+    const raw: ContinuousPoint[] = [];
+    for (const y of source) {
+      for (let m = 0; m < monthsFor(y.year); m++) {
+        raw.push({
+          year: y.year,
+          month: m,
+          net: y.monthlyNet[m],
+          qty: y.monthlyQty[m],
+          monthKey: `${y.year}-${String(m + 1).padStart(2, "0")}`,
+        });
+      }
+    }
+    let firstIdx = raw.findIndex((p) => p.net !== 0 || p.qty !== 0);
+    if (firstIdx < 0) firstIdx = 0;
+    return raw.slice(firstIdx);
+  }, [layout, yearly, isolatedYear, currentYearUtc, currentMonthUtc]);
+
+  const rawMax =
+    layout === "continuous"
+      ? Math.max(
+          1,
+          ...continuousPoints.map((p) =>
+            mode === "quantity" ? p.qty : p.net,
+          ),
+        )
+      : Math.max(
+          1,
+          ...seriesToShow.flatMap((s) =>
+            Array.from({ length: monthsFor(s.year) }, (_, m) => valueOf(s, m)),
+          ),
+        );
   const { maxVal, ticks } = niceScale(rawMax, 4);
 
   const xOfMonth = (m: number) =>
     paddingLeft + (innerW * (m + 0.5)) / axisMonths;
+  const xOfPoint = (i: number) =>
+    continuousPoints.length <= 1
+      ? paddingLeft + innerW / 2
+      : paddingLeft + (innerW * i) / (continuousPoints.length - 1);
   const yOfValue = (v: number) =>
     paddingTop + innerH - (Math.max(0, v) / maxVal) * innerH;
 
   const svgRef = useRef<SVGSVGElement>(null);
   const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!svgRef.current || seriesToShow.length === 0) return;
+    if (!svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * width;
+    if (layout === "continuous") {
+      if (continuousPoints.length === 0) return;
+      let bestI = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < continuousPoints.length; i++) {
+        const dx = Math.abs(xOfPoint(i) - svgX);
+        if (dx < bestDist) {
+          bestDist = dx;
+          bestI = i;
+        }
+      }
+      const p = continuousPoints[bestI];
+      setHover({ year: p.year, month: p.month });
+      return;
+    }
+    if (seriesToShow.length === 0) return;
     // Snap to the nearest month index (within the visible axis range).
     let bestM = 0;
     let bestDist = Infinity;
@@ -1655,13 +1782,42 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
             </span>
           )}
         </h2>
-        <ChartControls
-          mode={mode}
-          setMode={setMode}
-          years={yearly.map((y) => y.year)}
-          isolatedYear={isolatedYear}
-          setIsolatedYear={setIsolatedYear}
-        />
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              type="button"
+              className={`btn btn--xs ${layout === "stacked" ? "" : "btn--ghost"}`}
+              onClick={() => setLayout("stacked")}
+              title="Overlay each year on a Jan-Dec axis"
+            >
+              Stacked
+            </button>
+            <button
+              type="button"
+              className={`btn btn--xs ${layout === "continuous" ? "" : "btn--ghost"}`}
+              onClick={() => setLayout("continuous")}
+              title="Draw one continuous timeline across all months"
+            >
+              Continuous
+            </button>
+          </div>
+          <span
+            aria-hidden
+            style={{
+              width: 1,
+              height: 16,
+              background: "var(--parchment-200)",
+              margin: "0 2px",
+            }}
+          />
+          <ChartControls
+            mode={mode}
+            setMode={setMode}
+            years={yearly.map((y) => y.year)}
+            isolatedYear={isolatedYear}
+            setIsolatedYear={setIsolatedYear}
+          />
+        </div>
       </div>
 
       <div style={{ position: "relative" }}>
@@ -1671,7 +1827,7 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
           viewBox={`0 0 ${width} ${height}`}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
-          style={{ overflow: "visible", cursor: "crosshair" }}
+          style={{ overflow: "hidden", cursor: "crosshair" }}
         >
           {/* Horizontal grid + Y-axis labels */}
           {ticks.map((t) => (
@@ -1700,8 +1856,30 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
           {/* Vertical guide at hovered month */}
           {hover && (
             <line
-              x1={xOfMonth(hover.month)}
-              x2={xOfMonth(hover.month)}
+              x1={
+                layout === "continuous"
+                  ? xOfPoint(
+                      Math.max(
+                        0,
+                        continuousPoints.findIndex(
+                          (p) => p.year === hover.year && p.month === hover.month,
+                        ),
+                      ),
+                    )
+                  : xOfMonth(hover.month)
+              }
+              x2={
+                layout === "continuous"
+                  ? xOfPoint(
+                      Math.max(
+                        0,
+                        continuousPoints.findIndex(
+                          (p) => p.year === hover.year && p.month === hover.month,
+                        ),
+                      ),
+                    )
+                  : xOfMonth(hover.month)
+              }
               y1={paddingTop}
               y2={paddingTop + innerH}
               stroke="var(--ink-300)"
@@ -1711,29 +1889,63 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
             />
           )}
 
-          {/* Year lines */}
-          {yearly.map((s, i) => {
-            const color = YEAR_COLORS[i % YEAR_COLORS.length];
-            const dimmed = isolatedYear != null && isolatedYear !== s.year;
-            const opacity = dimmed ? 0.08 : 1;
-            const visible = monthsFor(s.year);
-            const monthIndexes = Array.from({ length: visible }, (_, m) => m);
-            const path = monthIndexes
-              .map((m) => `${m === 0 ? "M" : "L"}${xOfMonth(m)},${yOfValue(valueOf(s, m))}`)
+          {/* Year lines — stacked layout */}
+          {layout === "stacked" &&
+            yearly.map((s, i) => {
+              const color = YEAR_COLORS[i % YEAR_COLORS.length];
+              const dimmed = isolatedYear != null && isolatedYear !== s.year;
+              const opacity = dimmed ? 0.08 : 1;
+              const visible = monthsFor(s.year);
+              const monthIndexes = Array.from({ length: visible }, (_, m) => m);
+              const path = monthIndexes
+                .map((m) => `${m === 0 ? "M" : "L"}${xOfMonth(m)},${yOfValue(valueOf(s, m))}`)
+                .join(" ");
+              return (
+                <g key={s.year} opacity={opacity} pointerEvents={dimmed ? "none" : undefined}>
+                  <path d={path} stroke={color} strokeWidth={2} fill="none" />
+                  {monthIndexes.map((m) => {
+                    const v = valueOf(s, m);
+                    const isHovered =
+                      hover?.year === s.year && hover?.month === m;
+                    return (
+                      <circle
+                        key={m}
+                        cx={xOfMonth(m)}
+                        cy={yOfValue(v)}
+                        r={isHovered ? 5 : 3}
+                        fill={color}
+                        stroke={isHovered ? "#fff" : "none"}
+                        strokeWidth={isHovered ? 2 : 0}
+                      />
+                    );
+                  })}
+                </g>
+              );
+            })}
+
+          {/* Continuous single line across all months */}
+          {layout === "continuous" && continuousPoints.length > 0 && (() => {
+            const color = YEAR_COLORS[0];
+            const valueOfPoint = (p: ContinuousPoint) =>
+              mode === "quantity" ? p.qty : p.net;
+            const path = continuousPoints
+              .map(
+                (p, i) =>
+                  `${i === 0 ? "M" : "L"}${xOfPoint(i)},${yOfValue(valueOfPoint(p))}`,
+              )
               .join(" ");
             return (
-              <g key={s.year} opacity={opacity} pointerEvents={dimmed ? "none" : undefined}>
+              <g>
                 <path d={path} stroke={color} strokeWidth={2} fill="none" />
-                {monthIndexes.map((m) => {
-                  const v = valueOf(s, m);
+                {continuousPoints.map((p, i) => {
                   const isHovered =
-                    hover?.year === s.year && hover?.month === m;
+                    hover?.year === p.year && hover?.month === p.month;
                   return (
                     <circle
-                      key={m}
-                      cx={xOfMonth(m)}
-                      cy={yOfValue(v)}
-                      r={isHovered ? 5 : 3}
+                      key={p.monthKey}
+                      cx={xOfPoint(i)}
+                      cy={yOfValue(valueOfPoint(p))}
+                      r={isHovered ? 5 : 2.5}
                       fill={color}
                       stroke={isHovered ? "#fff" : "none"}
                       strokeWidth={isHovered ? 2 : 0}
@@ -1742,21 +1954,47 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
                 })}
               </g>
             );
-          })}
+          })()}
 
-          {/* X-axis month labels */}
-          {MONTH_LABELS.slice(0, axisMonths).map((label, m) => (
-            <text
-              key={label}
-              x={xOfMonth(m)}
-              y={paddingTop + innerH + 18}
-              fontSize="11"
-              fill="var(--ink-500)"
-              textAnchor="middle"
-            >
-              {label}
-            </text>
-          ))}
+          {/* X-axis month labels — stacked: Jan..Dec (or shorter) */}
+          {layout === "stacked" &&
+            MONTH_LABELS.slice(0, axisMonths).map((label, m) => (
+              <text
+                key={label}
+                x={xOfMonth(m)}
+                y={paddingTop + innerH + 18}
+                fontSize="11"
+                fill="var(--ink-500)"
+                textAnchor="middle"
+              >
+                {label}
+              </text>
+            ))}
+
+          {/* X-axis month labels — continuous: sparse MMM 'YY tags */}
+          {layout === "continuous" &&
+            (() => {
+              const stride = Math.max(1, Math.ceil(continuousPoints.length / 10));
+              return continuousPoints
+                .map((p, i) => {
+                  if (i !== continuousPoints.length - 1 && i % stride !== 0)
+                    return null;
+                  const short = `${MONTH_LABELS[p.month]} '${String(p.year).slice(-2)}`;
+                  return (
+                    <text
+                      key={p.monthKey}
+                      x={xOfPoint(i)}
+                      y={paddingTop + innerH + 18}
+                      fontSize="11"
+                      fill="var(--ink-500)"
+                      textAnchor="middle"
+                    >
+                      {short}
+                    </text>
+                  );
+                })
+                .filter(Boolean);
+            })()}
         </svg>
         {hover && hoveredSeries && (
           <YoyTooltip
@@ -1765,7 +2003,19 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
             value={hoveredValue}
             mode={mode}
             containerWidth={width}
-            xInViewBox={xOfMonth(hover.month)}
+            xInViewBox={
+              layout === "continuous"
+                ? xOfPoint(
+                    Math.max(
+                      0,
+                      continuousPoints.findIndex(
+                        (p) =>
+                          p.year === hover.year && p.month === hover.month,
+                      ),
+                    ),
+                  )
+                : xOfMonth(hover.month)
+            }
             yInViewBox={yOfValue(hoveredValue)}
             viewBoxHeight={height}
           />
@@ -1905,24 +2155,6 @@ function Top10DesignsChart({
   const monthlyFor = (s: DesignMonthlySeries) =>
     mode === "quantity" ? s.monthlyQty : s.monthly;
 
-  // Server sends the union of top-N-by-revenue and top-N-by-qty so we
-  // can re-rank locally when mode toggles without losing high-qty low-$
-  // designs. Cap at 10 after re-sorting.
-  const series = useMemo(() => {
-    const sorted = [...allSeries].sort((a, b) =>
-      mode === "quantity"
-        ? b.totalQty - a.totalQty
-        : b.totalNet - a.totalNet,
-    );
-    return sorted.slice(0, 10);
-  }, [allSeries, mode]);
-
-  useEffect(() => {
-    setHighlighted(null);
-    setHover(null);
-    setLegendHover(null);
-  }, [mode]);
-
   // All distinct years present in the data — powers the year buttons.
   const availableYears = useMemo(() => {
     const set = new Set<number>();
@@ -1940,6 +2172,56 @@ function Top10DesignsChart({
           ),
     [months, isolatedYear],
   );
+
+  // Server sends the union of top-N-by-revenue and top-N-by-qty so we
+  // can re-rank locally when mode toggles without losing high-qty low-$
+  // designs. When a year is isolated, we re-rank by that year's totals
+  // and drop designs with no sales in that year — otherwise the legend
+  // would show 10 designs but half would be flat-line ghosts.
+  const displayTotal = (s: DesignMonthlySeries): { net: number; qty: number } => {
+    if (isolatedYear == null) {
+      return { net: s.totalNet, qty: s.totalQty };
+    }
+    let net = 0;
+    let qty = 0;
+    for (const m of visibleMonths) {
+      net += s.monthly[m] ?? 0;
+      qty += s.monthlyQty[m] ?? 0;
+    }
+    return { net, qty };
+  };
+
+  const series = useMemo(() => {
+    if (isolatedYear == null) {
+      const sorted = [...allSeries].sort((a, b) =>
+        mode === "quantity"
+          ? b.totalQty - a.totalQty
+          : b.totalNet - a.totalNet,
+      );
+      return sorted.slice(0, 10);
+    }
+    const yearMonths = months.filter(
+      (m) => parseInt(m.split("-")[0], 10) === isolatedYear,
+    );
+    const withTotal = allSeries.map((s) => ({
+      s,
+      key:
+        mode === "quantity"
+          ? yearMonths.reduce((a, m) => a + (s.monthlyQty[m] ?? 0), 0)
+          : yearMonths.reduce((a, m) => a + (s.monthly[m] ?? 0), 0),
+    }));
+    return withTotal
+      .filter((x) => x.key > 0)
+      .sort((a, b) => b.key - a.key)
+      .slice(0, 10)
+      .map((x) => x.s);
+  }, [allSeries, mode, isolatedYear, months]);
+
+  useEffect(() => {
+    setHighlighted(null);
+    setHover(null);
+    setLegendHover(null);
+  }, [mode, isolatedYear]);
 
   const width = 1080;
   const height = 260;
@@ -2017,7 +2299,21 @@ function Top10DesignsChart({
       ? monthlyFor(hoveredSeries)[visibleMonths[hover.monthIdx]] ?? 0
       : 0;
 
-  if (series.length === 0) return null;
+  if (series.length === 0) {
+    return (
+      <ChartEmptyCard
+        title="Top 10 designs over time"
+        message={
+          isolatedYear != null
+            ? `No design sales in ${isolatedYear}. Pick a different year or reset to All years.`
+            : "No design sales yet."
+        }
+        onReset={
+          isolatedYear != null ? () => setIsolatedYear(null) : undefined
+        }
+      />
+    );
+  }
 
   return (
     <div
@@ -2076,7 +2372,7 @@ function Top10DesignsChart({
           viewBox={`0 0 ${width} ${height}`}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
-          style={{ overflow: "visible", cursor: "crosshair" }}
+          style={{ overflow: "hidden", cursor: "crosshair" }}
         >
           {/* Horizontal gridlines + Y-axis labels */}
           {ticks.map((t) => (
@@ -2270,8 +2566,8 @@ function Top10DesignsChart({
                   }}
                 >
                   {mode === "quantity"
-                    ? `${Math.round(s.totalQty)}×`
-                    : moneyCompact(s.totalNet)}
+                    ? `${Math.round(displayTotal(s).qty)}×`
+                    : moneyCompact(displayTotal(s).net)}
                 </span>
               </button>
               {hovered && s.design_title && (
@@ -2550,26 +2846,6 @@ function Top10KeywordsChart({
   const monthlyFor = (s: KeywordMonthlySeries) =>
     mode === "quantity" ? s.monthlyQty : s.monthly;
 
-  // The server sends the union of top-N-by-revenue and top-N-by-qty so
-  // we can re-rank locally when the mode toggles without losing keywords
-  // that dominate only one metric. Re-slice back to the display cap of
-  // 20 after sorting.
-  const series = useMemo(() => {
-    const sorted = [...allSeries].sort((a, b) =>
-      mode === "quantity"
-        ? b.totalQty - a.totalQty
-        : b.totalNet - a.totalNet,
-    );
-    return sorted.slice(0, 20);
-  }, [allSeries, mode]);
-
-  // Any time the ranking changes the highlighted-index would point at
-  // the wrong keyword — reset it. Same for hover.
-  useEffect(() => {
-    setHighlighted(null);
-    setHover(null);
-  }, [mode]);
-
   const availableYears = useMemo(() => {
     const set = new Set<number>();
     for (const m of months) set.add(parseInt(m.split("-")[0], 10));
@@ -2585,6 +2861,54 @@ function Top10KeywordsChart({
           ),
     [months, isolatedYear],
   );
+
+  // The server sends the union of top-N-by-revenue and top-N-by-qty so
+  // we can re-rank locally when the mode toggles without losing keywords
+  // that dominate only one metric. When a year is isolated we re-rank
+  // by that year's totals too and hide keywords with no data in it.
+  const displayTotal = (s: KeywordMonthlySeries): { net: number; qty: number } => {
+    if (isolatedYear == null) {
+      return { net: s.totalNet, qty: s.totalQty };
+    }
+    let net = 0;
+    let qty = 0;
+    for (const m of visibleMonths) {
+      net += s.monthly[m] ?? 0;
+      qty += s.monthlyQty[m] ?? 0;
+    }
+    return { net, qty };
+  };
+
+  const series = useMemo(() => {
+    if (isolatedYear == null) {
+      const sorted = [...allSeries].sort((a, b) =>
+        mode === "quantity"
+          ? b.totalQty - a.totalQty
+          : b.totalNet - a.totalNet,
+      );
+      return sorted.slice(0, 20);
+    }
+    const yearMonths = months.filter(
+      (m) => parseInt(m.split("-")[0], 10) === isolatedYear,
+    );
+    const withTotal = allSeries.map((s) => ({
+      s,
+      key:
+        mode === "quantity"
+          ? yearMonths.reduce((a, m) => a + (s.monthlyQty[m] ?? 0), 0)
+          : yearMonths.reduce((a, m) => a + (s.monthly[m] ?? 0), 0),
+    }));
+    return withTotal
+      .filter((x) => x.key > 0)
+      .sort((a, b) => b.key - a.key)
+      .slice(0, 20)
+      .map((x) => x.s);
+  }, [allSeries, mode, isolatedYear, months]);
+
+  useEffect(() => {
+    setHighlighted(null);
+    setHover(null);
+  }, [mode, isolatedYear]);
 
   const width = 1080;
   const height = 240;
@@ -2657,7 +2981,21 @@ function Top10KeywordsChart({
       ? monthlyFor(hoveredSeries)[visibleMonths[hover.monthIdx]] ?? 0
       : 0;
 
-  if (series.length === 0) return null;
+  if (series.length === 0) {
+    return (
+      <ChartEmptyCard
+        title="Top 20 keywords by sales"
+        message={
+          isolatedYear != null
+            ? `No keyword activity in ${isolatedYear}. Pick a different year or reset to All years.`
+            : "No keyword activity yet."
+        }
+        onReset={
+          isolatedYear != null ? () => setIsolatedYear(null) : undefined
+        }
+      />
+    );
+  }
 
   return (
     <div
@@ -2717,7 +3055,7 @@ function Top10KeywordsChart({
           viewBox={`0 0 ${width} ${height}`}
           onMouseMove={onMouseMove}
           onMouseLeave={onMouseLeave}
-          style={{ overflow: "visible", cursor: "crosshair" }}
+          style={{ overflow: "hidden", cursor: "crosshair" }}
         >
           {ticks.map((t) => (
             <g key={t}>
@@ -2876,8 +3214,8 @@ function Top10KeywordsChart({
                 }}
               >
                 {mode === "quantity"
-                  ? `${Math.round(s.totalQty)}×`
-                  : moneyCompact(s.totalNet)}
+                  ? `${Math.round(displayTotal(s).qty)}×`
+                  : moneyCompact(displayTotal(s).net)}
               </span>
             </button>
           );
