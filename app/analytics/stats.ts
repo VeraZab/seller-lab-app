@@ -501,19 +501,30 @@ function isRefund(r: SalesRow): boolean {
 // page can surface a "my purchases" KPI alongside sales revenue —
 // otherwise the "why doesn't this match my Spoonflower dashboard?"
 // question always resurfaces.
-export function computeMyPurchases(allRows: SalesRow[]): MyPurchasesSummary {
+export function computeMyPurchases(
+  allRows: SalesRow[],
+  year?: number,
+): MyPurchasesSummary {
   let total = 0;
   let count = 0;
   let firstAt: string | null = null;
   let lastAt: string | null = null;
   for (const r of allRows) {
     if (r.type !== "debit") continue;
+    if (year != null && !isInYear(r.sold_at, year)) continue;
     total += Math.abs(r.amount);
     count++;
     if (firstAt == null || r.sold_at < firstAt) firstAt = r.sold_at;
     if (lastAt == null || r.sold_at > lastAt) lastAt = r.sold_at;
   }
   return { total: round2(total), count, firstAt, lastAt };
+}
+
+// Filter by calendar year using UTC — same bucketing computeYearly uses,
+// so the year buttons show consistent totals across the KPIs and charts.
+function isInYear(iso: string, year: number): boolean {
+  const d = new Date(iso);
+  return !Number.isNaN(d.getTime()) && d.getUTCFullYear() === year;
 }
 
 // A "sample" is anything Spoonflower sells to let a buyer test the design
@@ -526,8 +537,13 @@ function isSample(size: string | null | undefined): boolean {
   return s.includes("swatch") || s.includes("sample") || s.includes("test");
 }
 
-export function computeHeadline(allRows: SalesRow[]): Headline {
-  const rows = allRows.filter(isAnalyticsEvent);
+export function computeHeadline(
+  allRows: SalesRow[],
+  year?: number,
+): Headline {
+  const rows = allRows
+    .filter(isAnalyticsEvent)
+    .filter((r) => year == null || isInYear(r.sold_at, year));
   if (!rows.length) {
     return {
       grossRevenue: 0,
@@ -768,10 +784,16 @@ export type ConversionStats = {
   }[];
 };
 
-export function computeConversion(allRows: SalesRow[]): ConversionStats {
+export function computeConversion(
+  allRows: SalesRow[],
+  year?: number,
+): ConversionStats {
   // Only customer-facing events, then drop refunds — someone can't
   // "convert" a sample they got refunded.
-  const clean = allRows.filter(isAnalyticsEvent).filter((r) => !isRefund(r));
+  const clean = allRows
+    .filter(isAnalyticsEvent)
+    .filter((r) => !isRefund(r))
+    .filter((r) => year == null || isInYear(r.sold_at, year));
   // Pre-index full-product purchases by (customer + design_id) → array
   // of sold_at, so we can quickly ask "did this customer buy the full
   // product at any time?" per sample.

@@ -33,9 +33,17 @@ import type {
   YearlySeries,
 } from "./stats";
 
+type KpiBundle = {
+  headline: Headline;
+  myPurchases: MyPurchasesSummary;
+  conversion: ConversionStats;
+};
+
 type Stats = {
   headline: Headline;
   myPurchases: MyPurchasesSummary;
+  kpisByYear: Record<string, KpiBundle>;
+  availableYears: number[];
   daily: DailyPoint[];
   yearly: YearlySeries[];
   topDesigns: DesignAgg[];
@@ -478,10 +486,9 @@ function AnalyticsBody({
         )}
         {stats ? (
           <>
-            <HeadlineCards
-              h={stats.headline}
-              conversion={stats.conversion}
-              myPurchases={stats.myPurchases}
+            <HeadlineSection
+              kpisByYear={stats.kpisByYear}
+              availableYears={stats.availableYears}
             />
             <YearOverYearChart yearly={stats.yearly} />
             <Top10KeywordsChart
@@ -931,7 +938,11 @@ function CacheStatusBadge({
         <strong style={{ color: "var(--ink-900)" }}>
           {syncSummary.totalSaleEvents.toLocaleString("en-US")}
         </strong>{" "}
-        sale{syncSummary.totalSaleEvents === 1 ? "" : "s"}
+        entr{syncSummary.totalSaleEvents === 1 ? "y" : "ies"}
+        {" "}
+        <span style={{ color: "var(--ink-500)" }}>
+          (sales, refunds, debits, adjustments)
+        </span>
         {range && (
           <>
             {" "}
@@ -1181,6 +1192,99 @@ function EmptyState({
       >
         <Icon name="file" size={13} /> {pending ? "Uploading…" : "Upload CSV"}
       </button>
+    </div>
+  );
+}
+
+// Wraps HeadlineCards with a period filter that matches the chart
+// controls (All years · '24 · '25 · '26). Selected year picks the
+// pre-computed KPI bundle for that year.
+function HeadlineSection({
+  kpisByYear,
+  availableYears,
+}: {
+  kpisByYear: Record<string, KpiBundle>;
+  availableYears: number[];
+}) {
+  const [year, setYear] = useState<number | null>(null);
+  const bundle = year == null ? kpisByYear.all : kpisByYear[String(year)];
+  if (!bundle) return null;
+  const periodLabel = year == null ? "All years" : `${year}`;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "var(--space-3)",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+            margin: 0,
+          }}
+        >
+          Overview
+          <span
+            style={{
+              color: "var(--ink-500)",
+              fontFamily: "var(--font-body)",
+              fontWeight: 400,
+              fontSize: 13,
+              marginLeft: 8,
+            }}
+          >
+            {periodLabel}
+          </span>
+        </h2>
+        {availableYears.length > 0 && (
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className={`btn btn--xs ${year == null ? "" : "btn--ghost"}`}
+              onClick={() => setYear(null)}
+            >
+              All years
+            </button>
+            {availableYears.map((y, i) => (
+              <button
+                key={y}
+                type="button"
+                className={`btn btn--xs ${year === y ? "" : "btn--ghost"}`}
+                onClick={() => setYear(year === y ? null : y)}
+                style={{
+                  borderColor:
+                    year == null || year === y
+                      ? YEAR_COLORS[i % YEAR_COLORS.length]
+                      : undefined,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 8,
+                    height: 8,
+                    borderRadius: 999,
+                    background: YEAR_COLORS[i % YEAR_COLORS.length],
+                    marginRight: 6,
+                  }}
+                />
+                {String(y).replace(/^20/, "'")}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <HeadlineCards
+        h={bundle.headline}
+        conversion={bundle.conversion}
+        myPurchases={bundle.myPurchases}
+      />
     </div>
   );
 }

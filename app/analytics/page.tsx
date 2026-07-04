@@ -149,10 +149,47 @@ export default async function AnalyticsPage() {
   }
   const supabasePublicBase = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
+  // Pre-compute KPI variants per year so the client can flip between
+  // "All years" and any single year without a roundtrip. Small payload
+  // (a few numbers × few years) so cheap to send.
+  const yearsPresent = Array.from(
+    new Set(
+      rows
+        .map((r) => {
+          const d = new Date(r.sold_at);
+          return Number.isNaN(d.getTime()) ? null : d.getUTCFullYear();
+        })
+        .filter((y): y is number => y != null),
+    ),
+  ).sort((a, b) => a - b);
+  const kpisByYear: Record<
+    string,
+    {
+      headline: ReturnType<typeof computeHeadline>;
+      myPurchases: ReturnType<typeof computeMyPurchases>;
+      conversion: ReturnType<typeof computeConversion>;
+    }
+  > = {
+    all: {
+      headline: computeHeadline(rows),
+      myPurchases: computeMyPurchases(rows),
+      conversion: computeConversion(rows),
+    },
+  };
+  for (const y of yearsPresent) {
+    kpisByYear[String(y)] = {
+      headline: computeHeadline(rows, y),
+      myPurchases: computeMyPurchases(rows, y),
+      conversion: computeConversion(rows, y),
+    };
+  }
+
   const stats = rows.length
     ? {
         headline: computeHeadline(rows),
         myPurchases: computeMyPurchases(rows),
+        kpisByYear,
+        availableYears: yearsPresent,
         daily: computeDaily(rows),
         topDesigns: computeTopDesigns(rows),
         mostRefunded: computeMostRefunded(rows),
