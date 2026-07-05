@@ -211,20 +211,22 @@ no pattern, just a flat fill or a very subtle gradient/texture), use
 this kind-driven procedure:
 
   1. **Color kind is the anchor.** Walk through EVERY word in the
-     Color list and evaluate: does it name or describe this specific
-     color? Return every one that fits. Colors adjacent on the color
-     wheel count — a solid teal is legitimately tagged teal AND blue
-     AND green, plus every jewel-tone / tonal / brand-color name
-     nearby (emerald, jade, peacock, malachite, forest, ocean, sea,
-     dark, deep, muted, jewel-tone, etc.) if present in the Color
-     list. Do NOT skip the plain single-word color name in favor of
-     a specific one — return both "teal" AND "dark-teal" for a teal
-     solid.
+     Color list AND every word in the Uncategorized list (because
+     the auto-classifier may not have tagged every color word yet)
+     and evaluate each: does it name or describe this specific
+     color? Return every one that fits. Colors adjacent on the
+     color wheel count — a solid teal is legitimately tagged teal
+     AND blue AND green, plus every jewel-tone / tonal / brand-
+     color name nearby (emerald, jade, peacock, malachite, forest,
+     ocean, sea, dark, deep, muted, jewel-tone, etc.) if present
+     anywhere in the library. Do NOT skip the plain single-word
+     color name in favor of a specific one — return both "teal"
+     AND "dark-teal" for a teal solid.
 
   2. **Other kinds only if applicable to the color.** After the
-     Color list, walk through Use, Style, Mood, and Subject — for
-     each word ask "does this apply BECAUSE of this specific color?"
-     Include only if yes.
+     Color list, walk through Use, Style, Mood, Subject, AND
+     Uncategorized — for each word ask "does this apply BECAUSE
+     of this specific color?" Include only if yes.
        - Use: rooms/purposes where this solid would be used
          (nursery, upholstery, curtains, accent, coordinate,
          background, wallpaper). Solids are especially useful as
