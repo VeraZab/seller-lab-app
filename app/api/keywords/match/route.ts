@@ -30,6 +30,7 @@ type Row = {
   word: string;
   category: string | null;
   frequency: number | null;
+  kind: string | null;
 };
 
 type AiMatchOutput = {
@@ -103,19 +104,30 @@ export async function POST(req: Request) {
 
   const { data: rows, error: rowsErr } = await supabase
     .from("user_keywords")
-    .select("word, category, frequency")
-    .eq("user_id", user.id);
+    .select("word, category, frequency, kind")
+    .eq("user_id", user.id)
+    .eq("hidden", false);
   if (rowsErr) return json({ error: rowsErr.message }, 500);
 
   const allRows = (rows ?? []) as Row[];
   const libraryByNorm = new Map<string, Row>();
   for (const r of allRows) libraryByNorm.set(normalize(r.word), r);
 
+  // Group by kind so the AI can reason about each semantic bucket
+  // separately — critical for solid-color designs where "return every
+  // Color-kind library word that fits" only makes sense with the kinds
+  // presented explicitly.
+  const libraryByKind: Record<string, string[]> = {};
+  for (const r of allRows) {
+    const k = r.kind ?? "Uncategorized";
+    (libraryByKind[k] ??= []).push(r.word);
+  }
+
   const aiResult = await callAiAssistant({
     apiKey: geminiKey,
     imageBase64: image,
     mime,
-    libraryWords: allRows.map((r) => r.word),
+    libraryByKind,
     totalCap: TOTAL_CAP,
   });
   if (aiResult === null)
@@ -139,6 +151,23 @@ export async function POST(req: Request) {
   collectLibraryHits(toStringArray(aiResult.matched));
   collectLibraryHits(toStringArray(aiResult.generated));
 
+  // Log what the AI returned vs what actually landed in the library-hits
+  // set. If a color/word the user expected doesn't show up, this is the
+  // fastest way to see whether the AI didn't pick it OR the AI picked it
+  // but our lookup missed (typo, hyphen mismatch, etc.).
+  const aiMatched = toStringArray(aiResult.matched);
+  const aiGenerated = toStringArray(aiResult.generated);
+  const missedFromMatched = aiMatched.filter(
+    (w) => !libraryByNorm.has(normalize(w)),
+  );
+  console.log(
+    `[match] user=${user.id.slice(0, 8)} library=${allRows.length} ` +
+      `ai_matched=${aiMatched.length} ai_generated=${aiGenerated.length} ` +
+      `library_hits=${libraryHits.length} ` +
+      `dropped_no_library_row=${missedFromMatched.length}`,
+    { aiMatched, missedFromMatched },
+  );
+
   libraryHits.sort(compareByPriorityThenFreq);
   const out = libraryHits.slice(0, TOTAL_CAP);
 
@@ -157,7 +186,7 @@ async function callAiAssistant(args: {
   apiKey: string;
   imageBase64: string;
   mime: string;
-  libraryWords: string[];
+  libraryByKind: Record<string, string[]>;
   totalCap: number;
 }): Promise<AiMatchOutput | null> {
   const prompt = `You are tagging a design for a Spoonflower listing — a marketplace for fabric, wallpaper, and home goods. Your job: pick keywords from the user's library that apply to the attached design.
@@ -171,7 +200,58 @@ RULES:
 - Only skip a library word if it's clearly wrong for this design — e.g. an automotive term on a floral, or a generic stopword like "and" / "the".
 - Aim for breadth. Return everything that reasonably fits.
 
-Library: ${JSON.stringify(args.libraryWords)}
+The library below is grouped by KIND — a semantic taxonomy each word
+belongs to. The kinds are Color, Subject, Style, Mood, Use, Technique,
+Layout (and Uncategorized for unclassified words). Use the kinds to
+guide your evaluation — for example on a solid color design you'll walk
+the Color list exhaustively and then treat other kinds selectively.
+
+SOLID COLORS: if the design is a solid or near-solid color (no motif,
+no pattern, just a flat fill or a very subtle gradient/texture), use
+this kind-driven procedure:
+
+  1. **Color kind is the anchor.** Walk through EVERY word in the
+     Color list and evaluate: does it name or describe this specific
+     color? Return every one that fits. Colors adjacent on the color
+     wheel count — a solid teal is legitimately tagged teal AND blue
+     AND green, plus every jewel-tone / tonal / brand-color name
+     nearby (emerald, jade, peacock, malachite, forest, ocean, sea,
+     dark, deep, muted, jewel-tone, etc.) if present in the Color
+     list. Do NOT skip the plain single-word color name in favor of
+     a specific one — return both "teal" AND "dark-teal" for a teal
+     solid.
+
+  2. **Other kinds only if applicable to the color.** After the
+     Color list, walk through Use, Style, Mood, and Subject — for
+     each word ask "does this apply BECAUSE of this specific color?"
+     Include only if yes.
+       - Use: rooms/purposes where this solid would be used
+         (nursery, upholstery, curtains, accent, coordinate,
+         background, wallpaper). Solids are especially useful as
+         coordinate and blender fabrics — include those liberally.
+       - Style: aesthetic movements the color evokes (minimalist,
+         modern, scandi, boho, cottagecore, coastal).
+       - Mood: emotional register (calming, serene, moody, dramatic,
+         cozy, warm, cool, playful, elegant).
+       - Subject: object names that evocatively describe the color
+         even though the design doesn't depict the object (lavender
+         for pale purple, ocean/sea for teal, honey/sunset for warm
+         gold, grass/sage/moss for green). ONE exception to the
+         no-motif rule — only when the object name reads as a color
+         descriptor.
+
+  3. **Skip Technique and Layout kinds entirely** for solids —
+     there's no visible technique or layout on a flat color.
+
+**Breadth rule for solids:** be aggressive. Solid colors carry almost
+no signal beyond the color itself, so err strongly toward inclusion.
+If the Color list has 15+ words that plausibly describe this color,
+return all of them. Being conservative on solids is worse than being
+generous — a shopper searching "jade" for a teal-green solid deserves
+to find it.
+
+Library (grouped by kind):
+${JSON.stringify(args.libraryByKind, null, 2)}
 
 Respond with this JSON shape (the "generated" array must be empty):
 {
