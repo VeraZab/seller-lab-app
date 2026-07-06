@@ -912,7 +912,11 @@ const WordPill = memo(function WordPill({
 function pillHoverLabel(category: string | null, frequency: number): string {
   const suffix = " — click to edit";
   if (category === CATEGORY.SOLD) {
-    return `Sold on ${frequency} design${frequency === 1 ? "" : "s"}${suffix}`;
+    // `frequency` sums sale-events across every design that carries the
+    // token (see refreshSoldKeywords in page.tsx). One design that sold
+    // 75 times → 75; three designs that each sold 25 → 75. Phrase it as
+    // "sales" not "designs" so the number reads correctly.
+    return `Featured in ${frequency} sale${frequency === 1 ? "" : "s"}${suffix}`;
   }
   if (category === CATEGORY.LIKED) {
     return `Favorited ${frequency} time${frequency === 1 ? "" : "s"}${suffix}`;

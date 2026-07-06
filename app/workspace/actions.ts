@@ -379,7 +379,32 @@ export async function updateKeyword(oldWord: string, newWord: string) {
         .delete()
         .eq("user_id", user.id)
         .eq("word", oldWord);
+      // The user might be trying to resurrect a previously-tombstoned
+      // target — make sure it's un-hidden so the pill reappears.
+      await supabase
+        .from("user_keywords")
+        .update({ hidden: false })
+        .eq("user_id", user.id)
+        .eq("word", trimmed);
     }
   }
+  // Tombstone the old word so refreshSoldKeywords can't silently
+  // resurrect it on the next workspace load. Without this, if the
+  // user's Spoonflower tags/title still contain the old word
+  // verbatim, the sold-token harvest sees it as an unknown token and
+  // inserts a fresh sold row — making the rename appear to undo
+  // itself. The tombstone is a hidden row; re-adding the word via the
+  // AddKeywordsBar flips hidden back to false.
+  await supabase
+    .from("user_keywords")
+    .upsert(
+      {
+        user_id: user.id,
+        word: oldWord,
+        category: "user",
+        hidden: true,
+      },
+      { onConflict: "user_id,word", ignoreDuplicates: false },
+    );
   revalidatePath("/workspace");
 }

@@ -288,8 +288,14 @@ function extractSaleTokens(
     for (const p of sortedPhrases) {
       const hy = p.toLowerCase();
       const sp = hy.replace(/-/g, " ");
+      // Also match the concatenated form so a Spoonflower tag written
+      // as one word ("blockprint" for saved "block-print") folds into
+      // the phrase instead of getting split back apart every refresh.
+      const cat = hy.replace(/-/g, "");
+      const alternatives = [sp, hy];
+      if (cat !== hy) alternatives.push(cat);
       const pattern = new RegExp(
-        `\\b(?:${escapeRegExp(sp)}|${escapeRegExp(hy)})\\b`,
+        `\\b(?:${alternatives.map(escapeRegExp).join("|")})\\b`,
         "g",
       );
       text = text.replace(pattern, () => {

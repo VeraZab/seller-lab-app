@@ -281,6 +281,18 @@ async function refreshSoldKeywords(
         category: "sold",
         frequency: count,
       });
+    } else if (existing.category !== "sold") {
+      // Any non-sold category (user / trend / liked / spoonflower /
+      // uncategorized) gets promoted to "sold" as soon as the word
+      // proves itself on a sold design. Real sales data outranks any
+      // provenance signal — a "trend" word that actually sold is more
+      // useful framed as sold, and the heatmap should reflect that.
+      rowsToUpsert.push({
+        user_id: userId,
+        word,
+        category: "sold",
+        frequency: count,
+      });
     }
   }
 
@@ -329,8 +341,15 @@ function extractTokensFromTitleAndTags(
     for (const p of sortedPhrases) {
       const hy = p.toLowerCase();
       const sp = hy.replace(/-/g, " ");
+      // Also match the concatenated form so a Spoonflower tag that
+      // writes the phrase without a separator (e.g. "blockprint" for
+      // saved word "block-print") still folds into the phrase instead
+      // of getting re-harvested as a standalone token every refresh.
+      const cat = hy.replace(/-/g, "");
+      const alternatives = [sp, hy];
+      if (cat !== hy) alternatives.push(cat);
       const pattern = new RegExp(
-        `\\b(?:${escapeRegExp(sp)}|${escapeRegExp(hy)})\\b`,
+        `\\b(?:${alternatives.map(escapeRegExp).join("|")})\\b`,
         "g",
       );
       text = text.replace(pattern, () => {
