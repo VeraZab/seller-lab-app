@@ -147,13 +147,13 @@ function Sidebar({ user }: { user: SessionUser }) {
     { href: "/workspace", label: "Keyword Library", icon: "star" as const },
     {
       href: "/analytics",
-      label: "Sales & Analytics",
-      icon: "trend-up" as const,
+      label: "Sales",
+      icon: "dollar" as const,
     },
     {
       href: "/customers",
       label: "Customers",
-      icon: "history" as const,
+      icon: "user" as const,
       active: true,
     },
   ];

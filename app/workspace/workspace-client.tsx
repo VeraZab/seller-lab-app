@@ -172,15 +172,15 @@ function Sidebar({ user, signOut }: SidebarProps) {
     },
     {
       id: "analytics",
-      label: "Sales & Analytics",
-      icon: "trend-up" as const,
+      label: "Sales",
+      icon: "dollar" as const,
       href: "/analytics",
       active: false,
     },
     {
       id: "customers",
       label: "Customers",
-      icon: "history" as const,
+      icon: "user" as const,
       href: "/customers",
       active: false,
     },

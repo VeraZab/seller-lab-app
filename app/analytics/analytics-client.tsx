@@ -18,6 +18,16 @@ import type {
   SaleConflict,
   UploadSalesResult,
 } from "./actions";
+import {
+  autoGroupByPrefix,
+  createVariantSet,
+  deleteVariantSet,
+  renameVariantSet,
+  setVariantMembership,
+  type VariantData,
+  type VariantSet,
+} from "./variant-actions";
+import { foldDesignAggByVariant, foldDesignsByVariant } from "./stats";
 import type { DesignHistoryRow } from "./page";
 import type {
   BucketAgg,
@@ -80,6 +90,7 @@ export default function AnalyticsClient({
   storageUrlBase,
   historyByDesign,
   syncSummary,
+  variantData,
 }: {
   user: SessionUser;
   stats: Stats | null;
@@ -89,6 +100,7 @@ export default function AnalyticsClient({
   storageUrlBase: string;
   historyByDesign: Record<string, DesignHistoryRow[]>;
   syncSummary: SyncSummary;
+  variantData: VariantData;
 }) {
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
   const [locallyCached, setLocallyCached] = useState<Set<number>>(
@@ -208,6 +220,7 @@ export default function AnalyticsClient({
           storageUrlBase={storageUrlBase}
           historyByDesign={historyByDesign}
           syncSummary={syncSummary}
+          variantData={variantData}
         />
       </div>
       <ToastViewport toasts={toasts} onDismiss={dismissToast} />
@@ -226,14 +239,14 @@ function Sidebar({ user }: { user: SessionUser }) {
     },
     {
       href: "/analytics",
-      label: "Sales & Analytics",
-      icon: "trend-up" as const,
+      label: "Sales",
+      icon: "dollar" as const,
       active: true,
     },
     {
       href: "/customers",
       label: "Customers",
-      icon: "history" as const,
+      icon: "user" as const,
     },
   ];
   return (
@@ -355,6 +368,7 @@ function AnalyticsBody({
   storageUrlBase,
   historyByDesign,
   syncSummary,
+  variantData,
 }: {
   stats: Stats | null;
   uploadSales: (rows: ParsedSaleRow[]) => Promise<UploadSalesResult>;
@@ -364,10 +378,25 @@ function AnalyticsBody({
   storageUrlBase: string;
   historyByDesign: Record<string, DesignHistoryRow[]>;
   syncSummary: SyncSummary;
+  variantData: VariantData;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [selectedDesignId, setSelectedDesignId] = useState<number | null>(null);
+  // When the user clicks a card in the Top Designs grid we open a
+  // detail modal. Two shapes:
+  //   { kind: "design", designId }: opens one design's history.
+  //   { kind: "variant", name, designIds, leadDesignId }: aggregates
+  //     history + stats across every member of the variant set.
+  const [selectedTarget, setSelectedTarget] = useState<
+    | null
+    | { kind: "design"; designId: number }
+    | {
+        kind: "variant";
+        name: string;
+        designIds: number[];
+        leadDesignId: number;
+      }
+  >(null);
   const [conflicts, setConflicts] = useState<SaleConflict[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -500,12 +529,21 @@ function AnalyticsBody({
               months={stats.topDesignsMonthly.months}
               cachedSet={cachedSet}
               storageUrlBase={storageUrlBase}
+              variantData={variantData}
+              pushToast={pushToast}
             />
             <TopDesigns
               designs={stats.topDesigns}
               cachedSet={cachedSet}
               storageUrlBase={storageUrlBase}
-              onSelectDesign={setSelectedDesignId}
+              onSelectDesign={(designId) =>
+                setSelectedTarget({ kind: "design", designId })
+              }
+              onSelectVariant={(v) =>
+                setSelectedTarget({ kind: "variant", ...v })
+              }
+              variantData={variantData}
+              pushToast={pushToast}
             />
             <div
               style={{
@@ -532,19 +570,69 @@ function AnalyticsBody({
           <EmptyState onUpload={() => fileRef.current?.click()} pending={pending} />
         )}
       </div>
-      {selectedDesignId != null && stats && (
-        <DesignDetailModal
-          designId={selectedDesignId}
-          design={
-            stats.topDesigns.find((d) => d.design_id === selectedDesignId) ??
-            null
-          }
-          history={historyByDesign[String(selectedDesignId)] ?? []}
-          cached={cachedSet.has(selectedDesignId)}
-          storageUrlBase={storageUrlBase}
-          onClose={() => setSelectedDesignId(null)}
-        />
-      )}
+      {selectedTarget && stats && (() => {
+        if (selectedTarget.kind === "design") {
+          const design =
+            stats.topDesigns.find(
+              (d) => d.design_id === selectedTarget.designId,
+            ) ?? null;
+          return (
+            <DesignDetailModal
+              designId={selectedTarget.designId}
+              design={design}
+              displayTitle={design?.design_title ?? null}
+              memberCount={1}
+              history={historyByDesign[String(selectedTarget.designId)] ?? []}
+              cached={cachedSet.has(selectedTarget.designId)}
+              storageUrlBase={storageUrlBase}
+              onClose={() => setSelectedTarget(null)}
+            />
+          );
+        }
+        // Variant target: aggregate DesignAgg fields across members +
+        // concatenate history rows so every sale/refund across the set
+        // shows in one timeline.
+        const members = selectedTarget.designIds
+          .map((id) => stats.topDesigns.find((d) => d.design_id === id))
+          .filter((d): d is DesignAgg => !!d);
+        const combined: DesignAgg = members.reduce(
+          (acc, d) => ({
+            design_id: selectedTarget.leadDesignId,
+            design_title: selectedTarget.name,
+            gross: acc.gross + d.gross,
+            refunds: acc.refunds + d.refunds,
+            net: acc.net + d.net,
+            units: acc.units + d.units,
+            saleCount: acc.saleCount + d.saleCount,
+            refundCount: acc.refundCount + d.refundCount,
+          }),
+          {
+            design_id: selectedTarget.leadDesignId,
+            design_title: selectedTarget.name,
+            gross: 0,
+            refunds: 0,
+            net: 0,
+            units: 0,
+            saleCount: 0,
+            refundCount: 0,
+          },
+        );
+        const combinedHistory = selectedTarget.designIds
+          .flatMap((id) => historyByDesign[String(id)] ?? [])
+          .sort((a, b) => (b.sold_at < a.sold_at ? -1 : 1));
+        return (
+          <DesignDetailModal
+            designId={selectedTarget.leadDesignId}
+            design={combined}
+            displayTitle={selectedTarget.name}
+            memberCount={members.length}
+            history={combinedHistory}
+            cached={cachedSet.has(selectedTarget.leadDesignId)}
+            storageUrlBase={storageUrlBase}
+            onClose={() => setSelectedTarget(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -552,13 +640,28 @@ function AnalyticsBody({
 function DesignDetailModal({
   designId,
   design,
+  displayTitle,
+  memberCount,
   history,
   cached,
   storageUrlBase,
   onClose,
 }: {
+  // Anchor design_id — for variant sets, this is the lead design's id
+  // (used to render the primary thumbnail). For individual designs,
+  // just its own id.
   designId: number;
+  // Aggregated design agg. For variant sets, this is the sum across
+  // all members (net/gross/refunds/qty/counts). For individual designs
+  // it's the design's own row.
   design: DesignAgg | null;
+  // Title to display above the stats. For a variant set this is the
+  // set's name; for a design it's design.design_title. Passed
+  // separately so the modal doesn't have to know which case it's in.
+  displayTitle: string | null;
+  // Number of designs feeding this modal — 1 for individual, N for
+  // variant sets. Shown as a subtitle when > 1.
+  memberCount: number;
   history: DesignHistoryRow[];
   cached: boolean;
   storageUrlBase: string;
@@ -625,52 +728,83 @@ function DesignDetailModal({
         >
           <DesignSquareThumb
             designId={designId}
-            title={design?.design_title ?? null}
+            title={displayTitle ?? design?.design_title ?? null}
             cached={cached}
             storageUrlBase={storageUrlBase}
             size={120}
           />
           <div style={{ minWidth: 0, flex: 1 }}>
-            <a
-              href={`https://www.spoonflower.com/en/fabric/${designId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={`${design?.design_title ?? designId} — open on Spoonflower`}
-              style={{
-                color: "var(--ink-900)",
-                textDecoration: "none",
-                display: "block",
-              }}
-            >
-              <h2
+            {memberCount > 1 ? (
+              <div>
+                <h2
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    fontSize: 20,
+                    fontWeight: 500,
+                    margin: 0,
+                    letterSpacing: "-0.015em",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {displayTitle ?? `Variant set`}
+                </h2>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--ink-500)",
+                    fontFamily: "var(--font-mono)",
+                    marginTop: 4,
+                  }}
+                >
+                  Variant set · {memberCount} designs
+                </div>
+              </div>
+            ) : (
+              <a
+                href={`https://www.spoonflower.com/en/fabric/${designId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`${displayTitle ?? designId} — open on Spoonflower`}
                 style={{
-                  fontFamily: "var(--font-display)",
-                  fontSize: 20,
-                  fontWeight: 500,
-                  margin: 0,
-                  letterSpacing: "-0.015em",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
+                  color: "var(--ink-900)",
+                  textDecoration: "none",
+                  display: "block",
                 }}
               >
-                {design?.design_title ?? `Design ${designId}`}
-                <Icon name="arrow" size={13} color="var(--ink-500)" />
-              </h2>
-            </a>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--ink-500)",
-                fontFamily: "var(--font-mono)",
-                marginTop: 4,
-              }}
-            >
-              #{designId}
-            </div>
+                <h2
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    fontSize: 20,
+                    fontWeight: 500,
+                    margin: 0,
+                    letterSpacing: "-0.015em",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {displayTitle ?? `Design ${designId}`}
+                  <Icon name="arrow" size={13} color="var(--ink-500)" />
+                </h2>
+              </a>
+            )}
+            {memberCount === 1 && (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "var(--ink-500)",
+                  fontFamily: "var(--font-mono)",
+                  marginTop: 4,
+                }}
+              >
+                #{designId}
+              </div>
+            )}
             {design && (
               <div
                 style={{
@@ -1006,10 +1140,10 @@ function ConflictsBanner({
     <div
       style={{
         padding: "12px 14px",
-        border: "1px solid var(--saffron-400, #d9a441)",
+        border: "1px solid var(--saffron-300)",
         borderLeft: "3px solid var(--saffron-500, #b8863a)",
         borderRadius: 8,
-        background: "var(--saffron-50, #fdf6e9)",
+        background: "var(--saffron-50)",
         display: "flex",
         flexDirection: "column",
         gap: 8,
@@ -1113,7 +1247,7 @@ function PageHeader({
     >
       <div>
         <div className="eyebrow" style={{ color: "var(--ink-500)" }}>
-          Sales & Analytics
+          Sales
         </div>
         <h1
           style={{
@@ -1889,20 +2023,28 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
             />
           )}
 
-          {/* Year lines — stacked layout */}
+          {/* Year lines — stacked layout, filled area series. Each year
+              renders as a translucent shape closed to the x-axis, with
+              the top edge stroked in the year's color and points marking
+              each month. When a specific year is isolated the others are
+              skipped entirely. */}
           {layout === "stacked" &&
             yearly.map((s, i) => {
+              if (isolatedYear != null && isolatedYear !== s.year) return null;
               const color = YEAR_COLORS[i % YEAR_COLORS.length];
-              const dimmed = isolatedYear != null && isolatedYear !== s.year;
-              const opacity = dimmed ? 0.08 : 1;
               const visible = monthsFor(s.year);
               const monthIndexes = Array.from({ length: visible }, (_, m) => m);
-              const path = monthIndexes
+              const axisY = paddingTop + innerH;
+              const linePath = monthIndexes
                 .map((m) => `${m === 0 ? "M" : "L"}${xOfMonth(m)},${yOfValue(valueOf(s, m))}`)
                 .join(" ");
+              // Filled area = line path + segment down to the axis + back
+              // along the axis + close.
+              const areaPath = `${linePath} L${xOfMonth(monthIndexes[monthIndexes.length - 1] ?? 0)},${axisY} L${xOfMonth(0)},${axisY} Z`;
               return (
-                <g key={s.year} opacity={opacity} pointerEvents={dimmed ? "none" : undefined}>
-                  <path d={path} stroke={color} strokeWidth={2} fill="none" />
+                <g key={s.year}>
+                  <path d={areaPath} fill={color} opacity={0.18} stroke="none" />
+                  <path d={linePath} stroke={color} strokeWidth={2} fill="none" />
                   {monthIndexes.map((m) => {
                     const v = valueOf(s, m);
                     const isHovered =
@@ -1934,8 +2076,11 @@ function YearOverYearChart({ yearly }: { yearly: YearlySeries[] }) {
                   `${i === 0 ? "M" : "L"}${xOfPoint(i)},${yOfValue(valueOfPoint(p))}`,
               )
               .join(" ");
+            const axisY = paddingTop + innerH;
+            const areaPath = `${path} L${xOfPoint(continuousPoints.length - 1)},${axisY} L${xOfPoint(0)},${axisY} Z`;
             return (
               <g>
+                <path d={areaPath} fill={color} opacity={0.18} stroke="none" />
                 <path d={path} stroke={color} strokeWidth={2} fill="none" />
                 {continuousPoints.map((p, i) => {
                   const isHovered =
@@ -2133,25 +2278,53 @@ function YoyTooltip({
 // Top-10 designs monthly time series. One line per design, hover shows
 // title + total revenue + wallpaper/fabric/decor mix bar.
 function Top10DesignsChart({
-  series: allSeries,
+  series: rawSeries,
   months,
   cachedSet,
   storageUrlBase,
+  variantData,
+  pushToast,
 }: {
   series: DesignMonthlySeries[];
   months: string[];
   cachedSet: Set<number>;
   storageUrlBase: string;
+  variantData: VariantData;
+  pushToast: PushToast;
 }) {
+  const router = useRouter();
   const [hover, setHover] = useState<{
     designIdx: number;
     monthIdx: number;
   } | null>(null);
-  const [highlighted, setHighlighted] = useState<number | null>(null);
+  // Chart always renders a single-series bar chart for the "highlighted"
+  // design — no stacked view. Defaults to 0 (top earner). User can pick
+  // any thumbnail in the legend to swap which one is charted.
+  const [highlighted, setHighlighted] = useState<number>(0);
   const [legendHover, setLegendHover] = useState<number | null>(null);
   // Year filter: null = all years, else a specific YYYY.
   const [isolatedYear, setIsolatedYear] = useState<number | null>(null);
   const [mode, setMode] = useState<ChartMode>("revenue");
+  // Grouping: individual designs vs folded variant sets. Default to
+  // grouped when there's at least one variant set in scope — the user
+  // already told us that grouping is meaningful for them. Batch
+  // selection for CREATING variant sets lives in the TopDesigns table
+  // below; this chart just consumes the resulting sets.
+  const [grouping, setGrouping] = useState<"individual" | "grouped">(
+    variantData.sets.length > 0 ? "grouped" : "individual",
+  );
+
+  // Fold designs into variant sets when Grouped is active. Individual
+  // mode passes the raw per-design series through unchanged.
+  const allSeries = useMemo(() => {
+    if (grouping !== "grouped") return rawSeries;
+    return foldDesignsByVariant(
+      rawSeries,
+      variantData.sets,
+      variantData.setByDesignId,
+    );
+  }, [rawSeries, variantData, grouping]);
+
   const monthlyFor = (s: DesignMonthlySeries) =>
     mode === "quantity" ? s.monthlyQty : s.monthly;
 
@@ -2217,11 +2390,14 @@ function Top10DesignsChart({
       .map((x) => x.s);
   }, [allSeries, mode, isolatedYear, months]);
 
+  // Reset which design is charted when the underlying series changes
+  // (mode toggle, year isolation, grouping change). Always fall back to
+  // the first (top-earner).
   useEffect(() => {
-    setHighlighted(null);
+    setHighlighted(0);
     setHover(null);
     setLegendHover(null);
-  }, [mode, isolatedYear]);
+  }, [mode, isolatedYear, grouping, series.length]);
 
   const width = 1080;
   const height = 260;
@@ -2232,20 +2408,30 @@ function Top10DesignsChart({
   const innerW = width - paddingLeft - paddingRight;
   const innerH = height - paddingTop - paddingBottom;
 
+  // Single-series scale: y-axis fits the currently-charted design's
+  // biggest positive month. Negatives clamp to 0 in the visual — the
+  // tooltip still shows the raw signed value.
   const rawMax = Math.max(
     1,
-    ...series.flatMap((s) =>
-      visibleMonths.map((m) => monthlyFor(s)[m] ?? 0),
-    ),
+    ...visibleMonths.map((m) => {
+      const s = series[highlighted];
+      if (!s) return 0;
+      return Math.max(0, monthlyFor(s)[m] ?? 0);
+    }),
   );
   const { maxVal, ticks } = niceScale(rawMax, 4);
 
+  // Bars sit at the center of their column. With N months across innerW,
+  // each column is innerW/N wide and the bar occupies ~72% of it so
+  // there's whitespace between bars.
   const xOfMonth = (i: number) =>
-    visibleMonths.length === 1
+    visibleMonths.length === 0
       ? paddingLeft + innerW / 2
-      : paddingLeft + (innerW * i) / (visibleMonths.length - 1);
+      : paddingLeft + (innerW * (i + 0.5)) / visibleMonths.length;
   const yOfValue = (v: number) =>
     paddingTop + innerH - (Math.max(0, v) / maxVal) * innerH;
+  const barWidth =
+    (innerW / Math.max(1, visibleMonths.length)) * 0.72;
 
   const svgRef = useRef<SVGSVGElement>(null);
   const onMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -2254,7 +2440,8 @@ function Top10DesignsChart({
     const rect = svgRef.current.getBoundingClientRect();
     const svgX = ((e.clientX - rect.left) / rect.width) * width;
     const svgY = ((e.clientY - rect.top) / rect.height) * height;
-    // Snap to nearest month index.
+    // Single-series bars — hover just snaps to the nearest month
+    // column. Design index is always the currently highlighted one.
     let bestM = 0;
     let bestMDist = Infinity;
     for (let i = 0; i < visibleMonths.length; i++) {
@@ -2264,21 +2451,7 @@ function Top10DesignsChart({
         bestM = i;
       }
     }
-    // Pick the closest design at that month (respect selection: if a
-    // design is isolated, only that one is hoverable).
-    const candidateIdxs =
-      highlighted != null ? [highlighted] : series.map((_, i) => i);
-    let bestD = candidateIdxs[0] ?? 0;
-    let bestDDist = Infinity;
-    for (const i of candidateIdxs) {
-      const v = monthlyFor(series[i])[visibleMonths[bestM]] ?? 0;
-      const yd = Math.abs(yOfValue(v) - svgY);
-      if (yd < bestDDist) {
-        bestDDist = yd;
-        bestD = i;
-      }
-    }
-    setHover({ designIdx: bestD, monthIdx: bestM });
+    setHover({ designIdx: highlighted, monthIdx: bestM });
   };
   const onMouseLeave = () => setHover(null);
 
@@ -2298,6 +2471,16 @@ function Top10DesignsChart({
     hover != null && hoveredSeries != null
       ? monthlyFor(hoveredSeries)[visibleMonths[hover.monthIdx]] ?? 0
       : 0;
+  // Top-of-column y position for the hovered month — the highlighted
+  // design's value at that month. Tooltip anchors here so it sits just
+  // above the bar without overlapping.
+  const hoveredColumnTopY = useMemo(() => {
+    if (hover == null) return paddingTop;
+    const m = visibleMonths[hover.monthIdx];
+    const s = series[highlighted];
+    if (!s) return paddingTop;
+    return yOfValue(Math.max(0, monthlyFor(s)[m] ?? 0));
+  }, [hover, visibleMonths, series, mode, maxVal, highlighted]);
 
   if (series.length === 0) {
     return (
@@ -2343,26 +2526,60 @@ function Top10DesignsChart({
           }}
         >
           Top 10 designs over time
-          <span
-            style={{
-              color: "var(--ink-500)",
-              fontFamily: "var(--font-body)",
-              fontWeight: 400,
-              fontSize: 13,
-              marginLeft: 8,
-            }}
-          >
-            {MODE_META[mode].label.toLowerCase()} by month
-            {isolatedYear != null && ` · ${isolatedYear}`}
-          </span>
+          {isolatedYear != null && (
+            <span
+              style={{
+                color: "var(--ink-500)",
+                fontFamily: "var(--font-body)",
+                fontWeight: 400,
+                fontSize: 13,
+                marginLeft: 8,
+              }}
+            >
+              {isolatedYear}
+            </span>
+          )}
         </h2>
-        <ChartControls
-          mode={mode}
-          setMode={setMode}
-          years={availableYears}
-          isolatedYear={isolatedYear}
-          setIsolatedYear={setIsolatedYear}
-        />
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            alignItems: "center",
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+            marginLeft: "auto",
+          }}
+        >
+          {variantData.sets.length > 0 && (
+            <>
+              <ToggleSwitch
+                on={grouping === "grouped"}
+                onToggle={() =>
+                  setGrouping(
+                    grouping === "grouped" ? "individual" : "grouped",
+                  )
+                }
+                label="View as variant groups"
+              />
+              <span
+                aria-hidden
+                style={{
+                  width: 1,
+                  height: 16,
+                  background: "var(--parchment-200)",
+                  margin: "0 2px",
+                }}
+              />
+            </>
+          )}
+          <ChartControls
+            mode={mode}
+            setMode={setMode}
+            years={availableYears}
+            isolatedYear={isolatedYear}
+            setIsolatedYear={setIsolatedYear}
+          />
+        </div>
       </div>
 
       <div style={{ position: "relative" }}>
@@ -2398,56 +2615,29 @@ function Top10DesignsChart({
             </g>
           ))}
 
-          {/* Hover guide */}
-          {hover && (
-            <line
-              x1={xOfMonth(hover.monthIdx)}
-              x2={xOfMonth(hover.monthIdx)}
-              y1={paddingTop}
-              y2={paddingTop + innerH}
-              stroke="var(--ink-300)"
-              strokeWidth={1}
-              strokeDasharray="3 3"
-              pointerEvents="none"
-            />
-          )}
-
-          {/* Design lines. If a design is isolated, only that one draws. */}
-          {series.map((s, i) => {
-            if (highlighted != null && highlighted !== i) return null;
-            const color = YEAR_COLORS[i % YEAR_COLORS.length];
-            const values = monthlyFor(s);
-            const path = visibleMonths
-              .map((m, mi) => {
-                const v = values[m] ?? 0;
-                return `${mi === 0 ? "M" : "L"}${xOfMonth(mi)},${yOfValue(v)}`;
-              })
-              .join(" ");
+          {/* Single-series bars — always render one design's monthly
+              values. Which one is picked in the legend below. */}
+          {visibleMonths.map((m, mi) => {
+            const s = series[highlighted];
+            if (!s) return null;
+            const v = Math.max(0, monthlyFor(s)[m] ?? 0);
+            if (v === 0) return null;
+            const h = (v / maxVal) * innerH;
+            const y = paddingTop + innerH - h;
+            const cx = xOfMonth(mi);
+            const isHovered = hover?.monthIdx === mi;
             return (
-              <g key={s.design_id}>
-                <path
-                  d={path}
-                  stroke={color}
-                  strokeWidth={highlighted === i ? 3 : 2}
-                  fill="none"
-                />
-                {visibleMonths.map((m, mi) => {
-                  const v = values[m] ?? 0;
-                  const isHovered =
-                    hover?.designIdx === i && hover?.monthIdx === mi;
-                  return (
-                    <circle
-                      key={m}
-                      cx={xOfMonth(mi)}
-                      cy={yOfValue(v)}
-                      r={isHovered ? 5 : 2.5}
-                      fill={color}
-                      stroke={isHovered ? "#fff" : "none"}
-                      strokeWidth={isHovered ? 2 : 0}
-                    />
-                  );
-                })}
-              </g>
+              <rect
+                key={m}
+                x={cx - barWidth / 2}
+                y={y}
+                width={barWidth}
+                height={h}
+                fill={YEAR_COLORS[highlighted % YEAR_COLORS.length]}
+                opacity={isHovered ? 1 : 0.92}
+                stroke={isHovered ? "#fff" : "none"}
+                strokeWidth={isHovered ? 2 : 0}
+              />
             );
           })}
 
@@ -2481,7 +2671,10 @@ function Top10DesignsChart({
             mode={mode}
             svgEl={svgRef.current}
             xInViewBox={xOfMonth(hover.monthIdx)}
-            yInViewBox={yOfValue(hoveredValue)}
+            // Anchor at the top of the stacked column (not chart top,
+            // not the segment inside). Sits directly above the stack,
+            // close to the data yet never overlapping any bar segment.
+            yInViewBox={hoveredColumnTopY}
             viewBoxWidth={width}
             viewBoxHeight={height}
             cached={cachedSet.has(hoveredSeries.design_id)}
@@ -2503,16 +2696,21 @@ function Top10DesignsChart({
         {series.map((s, i) => {
           const color = YEAR_COLORS[i % YEAR_COLORS.length];
           const active = highlighted === i;
-          const dim = highlighted != null && highlighted !== i;
+          const dim = !active;
           const hovered = legendHover === i;
+          const isVariantSet = !!s.variantSetId;
+          const variantCount = s.variantDesignIds?.length ?? 0;
+          const thumbAnchor = isVariantSet
+            ? s.variantLeadDesignId ?? s.design_id
+            : s.design_id;
           return (
             <div
-              key={s.design_id}
+              key={s.variantSetId ?? s.design_id}
               style={{ position: "relative", flexShrink: 0 }}
             >
               <button
                 type="button"
-                onClick={() => setHighlighted(active ? null : i)}
+                onClick={() => setHighlighted(i)}
                 onMouseEnter={() => setLegendHover(i)}
                 onMouseLeave={() =>
                   setLegendHover((v) => (v === i ? null : v))
@@ -2522,31 +2720,82 @@ function Top10DesignsChart({
                   width: 96,
                   height: 96,
                   padding: 0,
-                  // Always outline in the design's line color so the
-                  // thumbnail visually anchors to its line on the graph.
-                  border: `4px solid ${color}`,
+                  border: `2px solid ${color}`,
                   borderRadius: 12,
                   background: "var(--surface)",
                   cursor: "pointer",
                   overflow: "hidden",
-                  opacity: dim ? 0.35 : 1,
+                  opacity: dim ? 0.55 : 1,
                   transition:
                     "opacity 160ms ease-out, box-shadow 160ms ease-out",
-                  // Extra ring when active or hovered to signal state
-                  // without changing the always-visible outline color.
                   boxShadow:
-                    active || hovered ? `0 0 0 3px ${color}33` : "none",
+                    active || hovered ? `0 0 0 2px ${color}33` : "none",
                 }}
               >
-                <DesignSquareThumb
-                  designId={s.design_id}
-                  title={s.design_title}
-                  cached={cachedSet.has(s.design_id)}
-                  storageUrlBase={storageUrlBase}
-                  size={88}
-                />
-                {/* Total pill — mode-aware so the badge matches whatever
-                    the chart's y-axis is currently plotting. */}
+                {/* Variant sets get a stacked-thumbnail feel: the lead
+                    design's thumb is the anchor, with subtle offset
+                    layers behind and a small "N variants" chip. */}
+                {isVariantSet && variantCount > 1 && (
+                  <>
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: -2,
+                        left: 4,
+                        right: -2,
+                        bottom: 6,
+                        borderRadius: 8,
+                        border: `1px solid ${color}88`,
+                        background: "var(--parchment-50)",
+                        zIndex: 0,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 2,
+                        right: 0,
+                        bottom: 4,
+                        borderRadius: 9,
+                        border: `1px solid ${color}bb`,
+                        background: "var(--surface)",
+                        zIndex: 1,
+                      }}
+                    />
+                  </>
+                )}
+                <div style={{ position: "relative", zIndex: 2 }}>
+                  <DesignSquareThumb
+                    designId={thumbAnchor}
+                    title={s.design_title}
+                    cached={cachedSet.has(thumbAnchor)}
+                    storageUrlBase={storageUrlBase}
+                    size={88}
+                  />
+                </div>
+                {isVariantSet && variantCount > 1 && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 4,
+                      left: 4,
+                      padding: "1px 6px",
+                      borderRadius: 999,
+                      background: color,
+                      color: "var(--parchment-50)",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      fontFamily: "var(--font-mono)",
+                      lineHeight: 1.5,
+                      pointerEvents: "none",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+                      zIndex: 3,
+                    }}
+                  >
+                    ×{variantCount}
+                  </span>
+                )}
                 <span
                   style={{
                     position: "absolute",
@@ -2563,6 +2812,7 @@ function Top10DesignsChart({
                     lineHeight: 1.4,
                     pointerEvents: "none",
                     boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+                    zIndex: 3,
                   }}
                 >
                   {mode === "quantity"
@@ -2576,6 +2826,1350 @@ function Top10DesignsChart({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Help modal that explains variant grouping — the two ways to create a
+// set (drag-drop and auto-group), how folded totals aggregate,
+// clicking the ×N chip to edit, and the toggle switching between
+// individual and grouped views.
+const kbdStyle: React.CSSProperties = {
+  padding: "1px 6px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11.5,
+  background: "var(--parchment-100)",
+  border: "1px solid var(--parchment-300)",
+  borderRadius: 4,
+  color: "var(--ink-900)",
+};
+
+function VariantGroupsHelpModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="How variant grouping works"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(20, 24, 42, 0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "var(--space-5)",
+        zIndex: 100,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)",
+          borderRadius: 12,
+          padding: 24,
+          width: 560,
+          maxWidth: "94vw",
+          maxHeight: "88vh",
+          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontFamily: "var(--font-display)",
+            fontSize: 20,
+            fontWeight: 500,
+          }}
+        >
+          Grouping variants
+        </h3>
+        <p style={{ margin: 0, fontSize: 14, color: "var(--ink-700)", lineHeight: 1.55 }}>
+          Group color and scale versions of the same design so their sales
+          fold into one card.
+        </p>
+
+        <div>
+          <h4 style={{ margin: "0 0 6px", fontFamily: "var(--font-display)", fontSize: 14, fontWeight: 500 }}>
+            Ways to group
+          </h4>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, color: "var(--ink-700)", lineHeight: 1.65 }}>
+            <li>
+              <strong>Drag a card onto another.</strong> Onto a plain design
+              makes a new group. Onto an existing group adds to it. Group
+              onto group merges them.
+            </li>
+            <li>
+              <strong>Click the <span style={{ display: "inline-flex", verticalAlign: "middle", width: 14, height: 14, borderRadius: 999, background: "var(--surface)", boxShadow: "0 0 0 1px var(--parchment-300)", alignItems: "center", justifyContent: "center", margin: "0 2px" }}>
+                <svg width="7" height="7" viewBox="0 0 10 10" aria-hidden><line x1="5" y1="1.4" x2="5" y2="8.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /><line x1="1.4" y1="5" x2="8.6" y2="5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+              </span> icon</strong> on a card. A searchable list of groups pops
+              up — pick one to add / merge into.
+            </li>
+            <li>
+              <strong>Multi-select first.</strong> Hold <kbd style={kbdStyle}>Cmd</kbd> (Mac) or{" "}
+              <kbd style={kbdStyle}>Ctrl</kbd> (Windows) and click cards to build
+              a selection. Then drag any one of them onto a target, or click
+              its <span style={{ display: "inline-flex", verticalAlign: "middle", width: 14, height: 14, borderRadius: 999, background: "var(--surface)", boxShadow: "0 0 0 1px var(--parchment-300)", alignItems: "center", justifyContent: "center", margin: "0 2px" }}>
+                <svg width="7" height="7" viewBox="0 0 10 10" aria-hidden><line x1="5" y1="1.4" x2="5" y2="8.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /><line x1="1.4" y1="5" x2="8.6" y2="5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+              </span> — the whole selection moves together.
+            </li>
+            <li>
+              <strong>Auto-group by code.</strong> If your titles carry codes
+              like <code>ZAB25045</code>, use the header button to bulk-group
+              every design sharing a code in one shot.
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 style={{ margin: "0 0 6px", fontFamily: "var(--font-display)", fontSize: 14, fontWeight: 500 }}>
+            Managing groups
+          </h4>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, color: "var(--ink-700)", lineHeight: 1.65 }}>
+            <li>
+              Click the <strong>×N</strong> chip on a group to rename, remove
+              a variant, or delete the group.
+            </li>
+            <li>
+              Click any group card to see combined sales — stats and
+              transactions fold across every variant.
+            </li>
+            <li>
+              Toggle <strong>View as variant groups</strong> in the header to
+              switch between folded and individual views.
+            </li>
+            <li>
+              Press <kbd style={kbdStyle}>Esc</kbd> to clear a multi-selection.
+            </li>
+          </ul>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={onClose}
+          >
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Anchored dropdown that lists every existing variant set, searchable
+// by name. Selecting a set adds the caller's design_ids to it. Renders
+// via portal + position:fixed so it doesn't get clipped by parent
+// overflow.
+function AddToSetPopover({
+  label,
+  anchorRect,
+  sets,
+  designsById,
+  cachedSet,
+  storageUrlBase,
+  onClose,
+  onPick,
+}: {
+  label: string;
+  anchorRect: DOMRect;
+  sets: VariantSet[];
+  // Used to pick each set's top-earning member as its thumbnail hero
+  // (matches how the folded variant cards choose their thumbnail).
+  designsById: Map<number, DesignAgg>;
+  cachedSet: Set<number>;
+  storageUrlBase: string;
+  onClose: () => void;
+  onPick: (setId: string) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [pending, setPending] = useState(false);
+  const width = 320;
+  const gutter = 8;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !pending) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose, pending]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        if (!pending) onClose();
+      }
+    };
+    // Delay attach so the click that opened us doesn't immediately
+    // close it.
+    const id = window.setTimeout(() => {
+      document.addEventListener("mousedown", onDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [onClose, pending]);
+
+  // Position — prefer below/right of the anchor. Clamp to viewport.
+  const desiredTop = anchorRect.bottom + gutter;
+  const desiredLeft = anchorRect.left;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const left = Math.min(Math.max(gutter, desiredLeft), vw - width - gutter);
+  // If the popover would fall off the bottom, place above the anchor.
+  const maxHeight = 380;
+  const top =
+    desiredTop + maxHeight > vh - gutter
+      ? Math.max(gutter, anchorRect.top - maxHeight - gutter)
+      : desiredTop;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sets;
+    return sets.filter((s) => s.name.toLowerCase().includes(q));
+  }, [sets, query]);
+
+  const node = (
+    <div
+      ref={containerRef}
+      role="listbox"
+      style={{
+        position: "fixed",
+        top,
+        left,
+        width,
+        maxHeight,
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        boxShadow: "var(--shadow-lg)",
+        display: "flex",
+        flexDirection: "column",
+        zIndex: 1000,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ padding: "10px 12px 6px" }}>
+        <div style={{ fontSize: 11, color: "var(--ink-500)", marginBottom: 6 }}>
+          {label}
+        </div>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search variant sets"
+          disabled={pending}
+          style={{
+            width: "100%",
+            padding: "6px 8px",
+            borderRadius: 6,
+            border: "1px solid var(--border)",
+            font: "inherit",
+            fontSize: 12.5,
+          }}
+        />
+      </div>
+      <div
+        style={{
+          overflowY: "auto",
+          padding: "4px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+        }}
+      >
+        {filtered.length === 0 && (
+          <div
+            style={{
+              padding: "12px",
+              fontSize: 12,
+              color: "var(--ink-500)",
+              textAlign: "center",
+            }}
+          >
+            No sets match &ldquo;{query}&rdquo;
+          </div>
+        )}
+        {filtered.map((s) => {
+          // Pick the top-earning member as the thumbnail hero. Falls
+          // back to the first design_id if nothing resolves (e.g. all
+          // members outside topDesigns for some reason).
+          let anchor = s.designIds[0] ?? 0;
+          let bestNet = -Infinity;
+          for (const id of s.designIds) {
+            const d = designsById.get(id);
+            if (d && d.net > bestNet) {
+              bestNet = d.net;
+              anchor = id;
+            }
+          }
+          return (
+            <button
+              key={s.id}
+              type="button"
+              role="option"
+              disabled={pending}
+              onClick={async () => {
+                setPending(true);
+                try {
+                  await onPick(s.id);
+                } finally {
+                  setPending(false);
+                }
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "6px 8px",
+                border: "1px solid transparent",
+                borderRadius: 6,
+                background: "var(--surface)",
+                cursor: pending ? "wait" : "pointer",
+                textAlign: "left",
+                font: "inherit",
+                color: "var(--ink-900)",
+              }}
+              onMouseEnter={(e) => {
+                if (!pending)
+                  e.currentTarget.style.background = "var(--parchment-100)";
+              }}
+              onMouseLeave={(e) => {
+                if (!pending)
+                  e.currentTarget.style.background = "var(--surface)";
+              }}
+            >
+              <div style={{ width: 36, height: 36, flexShrink: 0 }}>
+                <DesignSquareThumb
+                  designId={anchor}
+                  title={s.name}
+                  cached={cachedSet.has(anchor)}
+                  storageUrlBase={storageUrlBase}
+                  size={36}
+                />
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={s.name}
+                >
+                  {s.name}
+                </div>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--ink-500)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {s.designIds.length} design
+                  {s.designIds.length === 1 ? "" : "s"}
+                </div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+  return createPortal(node, document.body);
+}
+
+// Confirmation modal for multi-source drops. Shows the target (a
+// variant set or a plain design) and each source card so the user can
+// verify what they're about to merge before it commits.
+function ConfirmDropModal({
+  target,
+  sources,
+  designsById,
+  variantData,
+  cachedSet,
+  storageUrlBase,
+  onCancel,
+  onConfirm,
+}: {
+  target: DragPayload;
+  sources: DragPayload[];
+  designsById: Map<number, DesignAgg>;
+  variantData: VariantData;
+  cachedSet: Set<number>;
+  storageUrlBase: string;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onCancel, busy]);
+
+  // Resolve target thumb + name.
+  const targetInfo =
+    target.kind === "variant"
+      ? (() => {
+          const set = variantData.sets.find((s) => s.id === target.setId);
+          const leadId = set?.designIds[0] ?? 0;
+          return {
+            title: set?.name ?? "Variant set",
+            subtitle: `${set?.designIds.length ?? 0} designs currently`,
+            anchorDesignId: leadId,
+          };
+        })()
+      : (() => {
+          const d = designsById.get(target.designId);
+          return {
+            title: d?.design_title ?? `Design ${target.designId}`,
+            subtitle: `#${target.designId}`,
+            anchorDesignId: target.designId,
+          };
+        })();
+
+  // Expand sources to individual design_ids for the preview list.
+  const sourceDesignIds = Array.from(
+    new Set(
+      sources.flatMap((s) =>
+        s.kind === "design"
+          ? [s.designId]
+          : variantData.sets.find((v) => v.id === s.setId)?.designIds ?? [],
+      ),
+    ),
+  );
+  const sourceDesigns = sourceDesignIds
+    .map((id) => designsById.get(id))
+    .filter((d): d is DesignAgg => !!d);
+
+  const verb =
+    target.kind === "variant"
+      ? `Add to "${targetInfo.title}"`
+      : `Create new group`;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm drop"
+      onClick={() => !busy && onCancel()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(20, 24, 42, 0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "var(--space-5)",
+        zIndex: 100,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)",
+          borderRadius: 12,
+          padding: 20,
+          width: 640,
+          maxWidth: "94vw",
+          maxHeight: "88vh",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+          }}
+        >
+          {verb}?
+        </h3>
+
+        {/* Target */}
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            alignItems: "center",
+            padding: 10,
+            background: "var(--parchment-100)",
+            borderRadius: 8,
+          }}
+        >
+          <DesignSquareThumb
+            designId={targetInfo.anchorDesignId}
+            title={targetInfo.title}
+            cached={cachedSet.has(targetInfo.anchorDesignId)}
+            storageUrlBase={storageUrlBase}
+            size={64}
+          />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 11, color: "var(--ink-500)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Target
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {targetInfo.title}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--ink-500)", fontFamily: "var(--font-mono)" }}>
+              {targetInfo.subtitle}
+            </div>
+          </div>
+        </div>
+
+        {/* Sources */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: 0 }}>
+          <div style={{ fontSize: 11, color: "var(--ink-500)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Moving {sourceDesigns.length} design{sourceDesigns.length === 1 ? "" : "s"}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              maxHeight: 260,
+              overflowY: "auto",
+              padding: 6,
+              border: "1px solid var(--parchment-200)",
+              borderRadius: 8,
+            }}
+          >
+            {sourceDesigns.map((d) => (
+              <div
+                key={d.design_id}
+                style={{
+                  width: 88,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+                title={`${d.design_title} · #${d.design_id}`}
+              >
+                <DesignSquareThumb
+                  designId={d.design_id}
+                  title={d.design_title}
+                  cached={cachedSet.has(d.design_id)}
+                  storageUrlBase={storageUrlBase}
+                  size={88}
+                />
+                <a
+                  href={`https://www.spoonflower.com/en/fabric/${d.design_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`${d.design_title} — open on Spoonflower`}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--ink-700)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    lineHeight: 1.3,
+                    textDecoration: "none",
+                  }}
+                >
+                  {d.design_title}
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            onClick={onCancel}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onConfirm();
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Applying…" : verb}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal that scans design titles for a user-supplied prefix code
+// (e.g. "ZAB"), extracts the token pattern PREFIX+alphanumerics, and
+// creates one variant set per code with 2+ members. Optionally clears
+// every existing set first so the user can start clean and let the
+// algorithm redo everything.
+function AutoGroupModal({
+  onClose,
+  onApply,
+}: {
+  onClose: () => void;
+  onApply: (prefix: string, clearExisting: boolean) => Promise<void>;
+}) {
+  const [prefix, setPrefix] = useState("");
+  const [clearExisting, setClearExisting] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose, busy]);
+
+  const canApply = prefix.trim().length >= 2 && !busy;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Auto-group by title code"
+      onClick={() => !busy && onClose()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(20, 24, 42, 0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "var(--space-5)",
+        zIndex: 100,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)",
+          borderRadius: 12,
+          padding: 20,
+          width: 480,
+          maxWidth: "94vw",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+          }}
+        >
+          Auto-group by title code
+        </h3>
+        <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink-700)", lineHeight: 1.55 }}>
+          Do your designs share a family code in the title (like{" "}
+          <code style={{ background: "var(--parchment-100)", padding: "1px 4px", borderRadius: 4 }}>
+            ZAB25045
+          </code>
+          )? Type the letter prefix only — we&rsquo;ll find the numbers
+          that follow.
+        </p>
+        <div
+          style={{
+            padding: "10px 12px",
+            background: "var(--parchment-100)",
+            borderRadius: 8,
+            fontSize: 12.5,
+            color: "var(--ink-700)",
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ marginBottom: 4 }}>
+            <strong>Example title:</strong>{" "}
+            <span style={{ color: "var(--ink-500)" }}>
+              &ldquo;cottagecore geese garden floral{" "}
+            </span>
+            <code
+              style={{
+                background: "var(--saffron-50)",
+                padding: "1px 4px",
+                borderRadius: 3,
+                fontWeight: 700,
+              }}
+            >
+              ZAB25045
+            </code>
+            <span style={{ color: "var(--ink-500)" }}>&rdquo;</span>
+          </div>
+          <div>
+            <strong>You type:</strong>{" "}
+            <code
+              style={{
+                background: "var(--saffron-50)",
+                padding: "1px 4px",
+                borderRadius: 3,
+                fontWeight: 700,
+              }}
+            >
+              ZAB
+            </code>
+            <span style={{ color: "var(--ink-500)" }}>
+              {" "}
+              (just the letters — not the numbers, not a full code)
+            </span>
+          </div>
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--ink-500)",
+            lineHeight: 1.55,
+          }}
+        >
+          <strong style={{ color: "var(--ink-700)" }}>How the match works:</strong>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            <li>
+              Case is ignored — <code>ZAB</code>, <code>Zab</code>, and{" "}
+              <code>zab</code> all match.
+            </li>
+            <li>
+              The prefix must stand on its own as a word — <code>ZAB</code>{" "}
+              inside a longer word like <code>ZABRA</code> doesn&rsquo;t
+              count.
+            </li>
+            <li>
+              Everything alphanumeric right after the prefix is captured as
+              the code, until the next space or punctuation.
+            </li>
+            <li>
+              Designs sharing the same code (2 or more) get grouped.
+            </li>
+          </ul>
+        </div>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--ink-500)" }}>
+            Prefix (letters only)
+          </span>
+          <input
+            type="text"
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value.toUpperCase())}
+            placeholder="PRE"
+            disabled={busy}
+            autoFocus
+            style={{
+              padding: "8px 10px",
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              font: "inherit",
+              fontFamily: "var(--font-mono)",
+              letterSpacing: "0.05em",
+            }}
+          />
+        </label>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+            color: "var(--ink-700)",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={clearExisting}
+            onChange={(e) => setClearExisting(e.target.checked)}
+            disabled={busy}
+          />
+          Delete all existing variant sets first
+        </label>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            onClick={onClose}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={!canApply}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onApply(prefix.trim(), clearExisting);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Grouping…" : "Apply"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal for editing an existing variant set. Lists members with a
+// remove button on each, allows renaming, and offers to delete the
+// whole set. Add-more happens via the "+" affordance on the set card
+// (a different mode), not from here — keeps this modal focused on the
+// existing set state.
+function VariantEditModal({
+  set,
+  designsById,
+  sortMode,
+  cachedSet,
+  storageUrlBase,
+  onClose,
+  onRename,
+  onRemoveMember,
+  onDelete,
+}: {
+  set: { id: string; name: string; designIds: number[] };
+  designsById: Map<number, DesignAgg>;
+  // Same sort metric currently selected on the Top Designs table so
+  // members here rank in the same order the user sees outside the
+  // modal.
+  sortMode: TopDesignSort;
+  cachedSet: Set<number>;
+  storageUrlBase: string;
+  onClose: () => void;
+  onRename: (name: string) => Promise<void>;
+  onRemoveMember: (designId: number) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [nameDraft, setNameDraft] = useState(set.name);
+  const [pending, setPending] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  const members = useMemo(() => {
+    const resolved = set.designIds
+      .map((id) => designsById.get(id))
+      .filter((d): d is DesignAgg => !!d);
+    resolved.sort((a, b) => {
+      if (sortMode === "sales") return b.saleCount - a.saleCount;
+      if (sortMode === "refundDollars") return b.refunds - a.refunds;
+      if (sortMode === "refundCount") return b.refundCount - a.refundCount;
+      return b.net - a.net;
+    });
+    return resolved;
+  }, [set.designIds, designsById, sortMode]);
+
+  const dirtyName = nameDraft.trim() && nameDraft.trim() !== set.name;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+      onClick={() => !pending && onClose()}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)",
+          borderRadius: 12,
+          padding: 20,
+          width: 520,
+          maxWidth: "94vw",
+          maxHeight: "88vh",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <h3
+            style={{
+              margin: 0,
+              fontFamily: "var(--font-display)",
+              fontSize: 18,
+              fontWeight: 500,
+            }}
+          >
+            Edit variant set
+          </h3>
+          <button
+            type="button"
+            className="btn btn--xs btn--ghost"
+            onClick={onClose}
+            disabled={pending}
+          >
+            Close
+          </button>
+        </div>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--ink-500)" }}>Name</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="text"
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              disabled={pending}
+              style={{
+                flex: 1,
+                padding: "8px 10px",
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                font: "inherit",
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn--sm"
+              disabled={pending || !dirtyName}
+              onClick={async () => {
+                setPending(true);
+                await onRename(nameDraft.trim());
+                setPending(false);
+              }}
+            >
+              Save name
+            </button>
+          </div>
+        </label>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            minHeight: 0,
+          }}
+        >
+          <span style={{ fontSize: 12, color: "var(--ink-500)" }}>
+            {members.length} member{members.length === 1 ? "" : "s"}
+            {members.length < 2 && (
+              <> · removing more will delete the set</>
+            )}
+          </span>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              overflowY: "auto",
+              border: "1px solid var(--parchment-200)",
+              borderRadius: 8,
+              padding: 6,
+            }}
+          >
+            {members.map((m) => (
+              <div
+                key={m.design_id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: 6,
+                  borderRadius: 6,
+                }}
+              >
+                <div style={{ width: 96, height: 96, flexShrink: 0 }}>
+                  <DesignSquareThumb
+                    designId={m.design_id}
+                    title={m.design_title}
+                    cached={cachedSet.has(m.design_id)}
+                    storageUrlBase={storageUrlBase}
+                    size={96}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <a
+                    href={`https://www.spoonflower.com/en/fabric/${m.design_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`${m.design_title} — open on Spoonflower`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      fontSize: 13,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "100%",
+                      color: "var(--ink-900)",
+                      textDecoration: "none",
+                    }}
+                  >
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {m.design_title}
+                    </span>
+                    <Icon name="arrow" size={11} color="var(--ink-500)" />
+                  </a>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--ink-500)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    #{m.design_id} ·{" "}
+                    <strong style={{ color: "var(--ink-900)" }}>
+                      {sortMode === "sales"
+                        ? `${m.saleCount} sold`
+                        : sortMode === "refundDollars"
+                          ? `${money(m.refunds)} refunded`
+                          : sortMode === "refundCount"
+                            ? `${m.refundCount} refunds`
+                            : money(m.net)}
+                    </strong>
+                    {sortMode === "net" && (
+                      <> · {m.saleCount} sold</>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn--xs btn--ghost"
+                  disabled={pending}
+                  onClick={async () => {
+                    setPending(true);
+                    await onRemoveMember(m.design_id);
+                    setPending(false);
+                  }}
+                  title="Remove this design from the set"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          {!confirmingDelete ? (
+            <button
+              type="button"
+              className="btn btn--sm btn--ghost"
+              onClick={() => setConfirmingDelete(true)}
+              disabled={pending}
+              style={{ color: "var(--brick-500)" }}
+            >
+              Delete set
+            </button>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--ink-700)" }}>
+                Delete this variant set? Members become ungrouped again.
+              </span>
+              <button
+                type="button"
+                className="btn btn--xs btn--ghost"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={pending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--xs"
+                onClick={async () => {
+                  setPending(true);
+                  await onDelete();
+                }}
+                disabled={pending}
+                style={{ background: "var(--brick-500)" }}
+              >
+                Delete
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={onClose}
+            disabled={pending}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small pill-style on/off switch. Used for surface-level view modes
+// where a two-button pair would feel like extra chrome.
+function ToggleSwitch({
+  on,
+  onToggle,
+  label,
+}: {
+  on: boolean;
+  onToggle: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={on}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "3px 10px 3px 4px",
+        borderRadius: 999,
+        border: `1px solid ${on ? "var(--sage-500)" : "var(--parchment-300)"}`,
+        background: on ? "var(--sage-100)" : "var(--surface)",
+        color: "var(--ink-900)",
+        font: "inherit",
+        fontSize: 12,
+        cursor: "pointer",
+        transition: "background 160ms ease-out, border-color 160ms ease-out",
+      }}
+    >
+      <span
+        style={{
+          width: 28,
+          height: 16,
+          borderRadius: 999,
+          background: on ? "var(--sage-500)" : "var(--parchment-300)",
+          position: "relative",
+          transition: "background 160ms ease-out",
+        }}
+        aria-hidden
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: on ? 14 : 2,
+            width: 12,
+            height: 12,
+            borderRadius: 999,
+            background: "var(--surface)",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            transition: "left 160ms ease-out",
+          }}
+        />
+      </span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+// Sticky bar shown while the user is in batch-select mode for grouping
+// designs into a variant set. Reports the current selection count and
+// exposes clear + save actions.
+function SelectionBar({
+  count,
+  onClear,
+  onSave,
+  mode = "new",
+  targetName,
+}: {
+  count: number;
+  onClear: () => void;
+  onSave: () => void;
+  mode?: "new" | "append";
+  targetName?: string;
+}) {
+  const minCount = mode === "append" ? 1 : 2;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "8px 12px",
+        background: "var(--saffron-50)",
+        border: "1px solid var(--saffron-300)",
+        borderRadius: 8,
+        fontSize: 12.5,
+      }}
+    >
+      <span>
+        <strong>{count}</strong> design{count === 1 ? "" : "s"} selected
+      </span>
+      <span style={{ color: "var(--ink-500)", fontSize: 11 }}>
+        {mode === "append"
+          ? `Adding to "${targetName}". Pick any orphan designs to add, then save.`
+          : "Pick 2 or more variants (color / scale variations of the same base design), then save."}
+      </span>
+      <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        <button
+          type="button"
+          className="btn btn--xs btn--ghost"
+          onClick={onClear}
+          disabled={count === 0}
+        >
+          Clear
+        </button>
+        <button
+          type="button"
+          className="btn btn--xs"
+          onClick={onSave}
+          disabled={count < minCount}
+        >
+          {mode === "append" ? "Add to set" : "Save as variant set"}
+        </button>
+      </span>
+    </div>
+  );
+}
+
+// Modal shown after the user commits a batch selection — confirms the
+// set name (defaulted to the top-earning design's title).
+function VariantSaveModal({
+  initialName,
+  count,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  initialName: string;
+  count: number;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (name: string) => void;
+}) {
+  const [name, setName] = useState(initialName);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)",
+          borderRadius: 12,
+          padding: 20,
+          width: 400,
+          maxWidth: "90vw",
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontFamily: "var(--font-display)",
+            fontSize: 18,
+            fontWeight: 500,
+          }}
+        >
+          Save {count} designs as a variant set
+        </h3>
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 12, color: "var(--ink-500)" }}>
+            Set name (defaults to the top-earner)
+          </span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            style={{
+              padding: "8px 10px",
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              font: "inherit",
+            }}
+          />
+        </label>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            onClick={onCancel}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={() => onSave(name.trim())}
+            disabled={saving || !name.trim()}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -3424,25 +5018,220 @@ function TopDesigns({
   cachedSet,
   storageUrlBase,
   onSelectDesign,
+  onSelectVariant,
+  variantData,
+  pushToast,
 }: {
   designs: DesignAgg[];
   cachedSet: Set<number>;
   storageUrlBase: string;
   onSelectDesign: (id: number) => void;
+  onSelectVariant: (set: {
+    name: string;
+    designIds: number[];
+    leadDesignId: number;
+  }) => void;
+  variantData: VariantData;
+  pushToast: PushToast;
 }) {
+  const router = useRouter();
   const [sortMode, setSortMode] = useState<TopDesignSort>("net");
+  // Grouping toggle. Auto-on the moment there's at least one variant
+  // set — that way the user sees their groupings by default. Can flip
+  // off to switch back to per-design view.
+  const [grouping, setGrouping] = useState<"individual" | "grouped">(
+    variantData.sets.length > 0 ? "grouped" : "individual",
+  );
+  // Edit modal state — which variant set the user opened via the ×N
+  // chip. Null when no modal is shown.
+  const [editingSet, setEditingSet] = useState<{
+    id: string;
+    name: string;
+    designIds: number[];
+  } | null>(null);
+  // Auto-group-by-prefix modal open state.
+  const [autoGroupOpen, setAutoGroupOpen] = useState(false);
+  // "How grouping works" explainer modal.
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Multi-selection for group actions. Keys are JSON-stringified
+  // DragPayloads so a set can hold a mix of design_ids and variant
+  // set_ids without collision. Cmd/Ctrl+click toggles; plain click
+  // clears and opens the detail modal like before.
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  // Pending drop staged for confirmation. Shown as a modal when the
+  // user drops with a multi-selection so they can review the target
+  // and confirm — otherwise merges silently through and it's easy to
+  // lose track of what merged with what.
+  const [pendingDrop, setPendingDrop] = useState<{
+    target: DragPayload;
+    sources: DragPayload[];
+  } | null>(null);
+  // "Add to existing set" popover — anchored to the + button of the
+  // originating card. Works for both orphan cards ("add me to a set")
+  // and variant-set cards ("merge me into another set"). `sourceSetIds`
+  // gets populated when the source is one or more variant sets so we
+  // can delete them after merging. `excludeSetId` prevents a set from
+  // appearing as a target for itself.
+  const [addToSetPopover, setAddToSetPopover] = useState<{
+    designIds: number[];
+    sourceSetIds: string[];
+    anchorRect: DOMRect;
+    excludeSetId?: string;
+    label: string;
+  } | null>(null);
+  const isSelected = (p: DragPayload) => selectedKeys.has(JSON.stringify(p));
+  const toggleSelected = (p: DragPayload) => {
+    setSelectedKeys((prev) => {
+      const key = JSON.stringify(p);
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedKeys(new Set());
+
+  // Clear selection on Escape.
+  useEffect(() => {
+    if (selectedKeys.size === 0) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") clearSelection();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [selectedKeys.size]);
+
+  // Fast lookup: design_id → DesignAgg. Used by the edit modal so
+  // members can render their thumbnail + title without another prop
+  // drill.
+  const designsById = useMemo(() => {
+    const m = new Map<number, DesignAgg>();
+    for (const d of designs) m.set(d.design_id, d);
+    return m;
+  }, [designs]);
+
+  // Fold designs by variant set when Grouped is active.
+  const displayDesigns = useMemo(() => {
+    if (grouping !== "grouped") return designs;
+    return foldDesignAggByVariant(
+      designs,
+      variantData.sets,
+      variantData.setByDesignId,
+    );
+  }, [designs, variantData, grouping]);
+
+  // Central drop dispatcher — resolves what to do when a source card is
+  // dropped onto a target card. Handles:
+  //   design → design: create a new variant set from both.
+  //   design → variant set: append the design to the set.
+  //   variant set → variant set: append all members of the source set
+  //     to the target set, then delete the emptied source set.
+  //   variant set → design: same as reverse (design → set) but treat
+  //     the design as the anchor since it's the drop target — actually
+  //     the more useful move is to merge them all into a new set. We'll
+  //     just create a new set containing the design + all members.
+  const onDropOnCard = (target: DragPayload, source: DragPayload) => {
+    // If the dragged card was part of a multi-selection, treat every
+    // selected card as a source (except the drop target itself).
+    const sourceKey = JSON.stringify(source);
+    const targetKey = JSON.stringify(target);
+    const sources: DragPayload[] =
+      selectedKeys.has(sourceKey) && selectedKeys.size > 1
+        ? Array.from(selectedKeys)
+            .filter((k) => k !== targetKey)
+            .map((k) => JSON.parse(k) as DragPayload)
+        : [source];
+
+    // Any multi-source drop gets staged for confirmation so the user
+    // sees the target explicitly. Single-source drops apply directly.
+    if (sources.length > 1) {
+      setPendingDrop({ target, sources });
+      return;
+    }
+    void applyDrop(target, sources);
+  };
+
+  const applyDrop = async (
+    target: DragPayload,
+    sources: DragPayload[],
+  ) => {
+    // Helper: expand a payload to the concrete design_ids it represents.
+    const expand = (p: DragPayload): number[] => {
+      if (p.kind === "design") return [p.designId];
+      const set = variantData.sets.find((s) => s.id === p.setId);
+      return set?.designIds ?? [];
+    };
+    const sourceDesignIds = Array.from(
+      new Set(sources.flatMap(expand)),
+    );
+    const sourceVariantSets = sources
+      .filter((s): s is Extract<DragPayload, { kind: "variant" }> => s.kind === "variant")
+      .map((s) => s.setId);
+
+    if (target.kind === "variant") {
+      if (sourceDesignIds.length === 0) return;
+      const existing =
+        variantData.sets.find((s) => s.id === target.setId)?.designIds ??
+        [];
+      const nextIds = Array.from(
+        new Set([...existing, ...sourceDesignIds]),
+      );
+      const res = await setVariantMembership(target.setId, nextIds);
+      if (res.error) {
+        pushToast({ kind: "error", message: res.error });
+        return;
+      }
+      // Delete any source variant sets whose members were merged in.
+      for (const setId of sourceVariantSets) {
+        if (setId !== target.setId) await deleteVariantSet(setId);
+      }
+      const targetName =
+        variantData.sets.find((s) => s.id === target.setId)?.name ??
+        "variant set";
+      pushToast({
+        kind: "success",
+        message:
+          sourceVariantSets.length > 0
+            ? `Merged into "${targetName}".`
+            : `Added ${sourceDesignIds.length} design${sourceDesignIds.length === 1 ? "" : "s"} to "${targetName}".`,
+      });
+      clearSelection();
+      router.refresh();
+      return;
+    }
+
+    // target.kind === "design" — create a NEW set containing target +
+    // all source design_ids.
+    const ids = Array.from(
+      new Set([target.designId, ...sourceDesignIds]),
+    );
+    if (ids.length < 2) return;
+    const lead =
+      designs
+        .filter((d) => ids.includes(d.design_id))
+        .sort((a, b) => b.net - a.net)[0];
+    const name = lead?.design_title ?? "Variant set";
+    const res = await createVariantSet(name, ids);
+    if (res.error) {
+      pushToast({ kind: "error", message: res.error });
+      return;
+    }
+    // Delete any source variant sets that were consumed.
+    for (const setId of sourceVariantSets) {
+      await deleteVariantSet(setId);
+    }
+    pushToast({ kind: "success", message: `Variant set "${name}" created.` });
+    clearSelection();
+    router.refresh();
+  };
 
   const sorted = useMemo(() => {
-    // Refund sort modes filter out designs with no refunds — otherwise
-    // the tail of the grid is padded with cards showing "0 refunds",
-    // which is noisy and hides the useful signal. Net / sales modes show
-    // all designs.
     const filtered =
       sortMode === "refundDollars"
-        ? designs.filter((d) => d.refunds > 0)
+        ? displayDesigns.filter((d) => d.refunds > 0)
         : sortMode === "refundCount"
-          ? designs.filter((d) => d.refundCount > 0)
-          : designs;
+          ? displayDesigns.filter((d) => d.refundCount > 0)
+          : displayDesigns;
     const copy = [...filtered];
     copy.sort((a, b) => {
       if (sortMode === "sales") return b.saleCount - a.saleCount;
@@ -3451,7 +5240,7 @@ function TopDesigns({
       return b.net - a.net;
     });
     return copy;
-  }, [designs, sortMode]);
+  }, [displayDesigns, sortMode]);
 
   if (!designs.length) return null;
   return (
@@ -3488,22 +5277,127 @@ function TopDesigns({
             {designs.length === 1
               ? "unique design bought"
               : "unique designs bought"}
+            {variantData.sets.length > 0 && (
+              <>
+                {" · "}
+                {variantData.sets.length}{" "}
+                {variantData.sets.length === 1
+                  ? "variant group"
+                  : "variant groups"}
+              </>
+            )}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 4 }}>
-          {(Object.keys(TOP_SORT_META) as TopDesignSort[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              className={`btn btn--xs ${sortMode === m ? "" : "btn--ghost"}`}
-              onClick={() => setSortMode(m)}
-              title={`Sort by ${TOP_SORT_META[m].label}`}
-            >
-              {TOP_SORT_META[m].short}
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {variantData.sets.length > 0 && (
+            <>
+              <ToggleSwitch
+                on={grouping === "grouped"}
+                onToggle={() =>
+                  setGrouping(
+                    grouping === "grouped" ? "individual" : "grouped",
+                  )
+                }
+                label="View as variant groups"
+              />
+              <span
+                aria-hidden
+                style={{
+                  width: 1,
+                  height: 16,
+                  background: "var(--parchment-200)",
+                  margin: "0 2px",
+                }}
+              />
+            </>
+          )}
+          <button
+            type="button"
+            className="btn btn--xs btn--ghost"
+            onClick={() => setAutoGroupOpen(true)}
+            title="Auto-group by a title code like ZAB25045"
+          >
+            Auto-group by code
+          </button>
+          <button
+            type="button"
+            aria-label="How does variant grouping work?"
+            title="How does variant grouping work?"
+            onClick={() => setHelpOpen(true)}
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 999,
+              border: "1.5px solid var(--ink-500)",
+              background: "var(--surface)",
+              color: "var(--ink-700)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              cursor: "pointer",
+              font: "inherit",
+              fontSize: 12,
+              fontWeight: 700,
+              fontStyle: "italic",
+              lineHeight: 1,
+              fontFamily: "var(--font-display)",
+            }}
+          >
+            i
+          </button>
+          <span
+            aria-hidden
+            style={{
+              width: 1,
+              height: 16,
+              background: "var(--parchment-200)",
+              margin: "0 2px",
+            }}
+          />
+          <div style={{ display: "flex", gap: 4 }}>
+            {(Object.keys(TOP_SORT_META) as TopDesignSort[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`btn btn--xs ${sortMode === m ? "" : "btn--ghost"}`}
+                onClick={() => setSortMode(m)}
+                title={`Sort by ${TOP_SORT_META[m].label}`}
+              >
+                {TOP_SORT_META[m].short}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+      {selectedKeys.size > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "6px 10px",
+            background: "var(--saffron-50)",
+            border: "1px solid var(--saffron-300)",
+            borderRadius: 8,
+            fontSize: 12.5,
+          }}
+        >
+          <strong>{selectedKeys.size}</strong>{" "}
+          selected
+          <span style={{ color: "var(--ink-500)", fontSize: 11 }}>
+            Drag any selected card onto a target to move them all together.
+          </span>
+          <button
+            type="button"
+            className="btn btn--xs btn--ghost"
+            style={{ marginLeft: "auto" }}
+            onClick={clearSelection}
+          >
+            Clear
+          </button>
+        </div>
+      )}
       <div
         style={{
           display: "grid",
@@ -3511,17 +5405,263 @@ function TopDesigns({
           gap: "var(--space-3)",
         }}
       >
-        {sorted.map((d) => (
-          <DesignThumbCard
-            key={d.design_id}
-            design={d}
-            cached={cachedSet.has(d.design_id)}
-            storageUrlBase={storageUrlBase}
-            sortMode={sortMode}
-            onClick={() => onSelectDesign(d.design_id)}
-          />
-        ))}
+        {sorted.map((d) => {
+          const isVariantSet = !!d.variantSetId;
+          const isOrphan =
+            !isVariantSet && !variantData.setByDesignId[d.design_id];
+          const cardPayload: DragPayload = isVariantSet
+            ? { kind: "variant", setId: d.variantSetId! }
+            : { kind: "design", designId: d.design_id };
+          return (
+            <DesignThumbCard
+              key={d.variantSetId ?? d.design_id}
+              design={d}
+              cached={cachedSet.has(
+                d.variantLeadDesignId ?? d.design_id,
+              )}
+              storageUrlBase={storageUrlBase}
+              sortMode={sortMode}
+              onClick={(e) => {
+                // Cmd (Mac) / Ctrl (Windows) → toggle in selection.
+                if (e.metaKey || e.ctrlKey) {
+                  e.preventDefault();
+                  toggleSelected(cardPayload);
+                  return;
+                }
+                // Plain click clears any prior selection and opens the
+                // detail modal.
+                if (selectedKeys.size > 0) clearSelection();
+                if (isVariantSet) {
+                  onSelectVariant({
+                    name: d.design_title,
+                    designIds: d.variantDesignIds ?? [],
+                    leadDesignId:
+                      d.variantLeadDesignId ?? d.design_id,
+                  });
+                } else {
+                  onSelectDesign(d.design_id);
+                }
+              }}
+              variantMarker={
+                isVariantSet
+                  ? {
+                      kind: "set",
+                      count: d.variantDesignIds?.length ?? 0,
+                    }
+                  : isOrphan
+                    ? { kind: "orphan" }
+                    : { kind: "member" }
+              }
+              onEditClick={
+                isVariantSet
+                  ? () => {
+                      setEditingSet({
+                        id: d.variantSetId!,
+                        name: d.design_title,
+                        designIds: d.variantDesignIds ?? [],
+                      });
+                    }
+                  : undefined
+              }
+              dragPayload={cardPayload}
+              onDropOnCard={(source) => onDropOnCard(cardPayload, source)}
+              selected={isSelected(cardPayload)}
+              onAddToSetClick={
+                variantData.sets.length >
+                  (isVariantSet ? 1 : 0)
+                  ? (anchorEl) => {
+                      // Assemble sources. If this card is in the multi
+                      // selection, use every selected card; otherwise
+                      // just this one.
+                      const key = JSON.stringify(cardPayload);
+                      const selectedPayloads = selectedKeys.has(key)
+                        ? Array.from(selectedKeys).map(
+                            (k) => JSON.parse(k) as DragPayload,
+                          )
+                        : [cardPayload];
+                      const designIds = Array.from(
+                        new Set(
+                          selectedPayloads.flatMap((p) =>
+                            p.kind === "design"
+                              ? [p.designId]
+                              : variantData.sets.find((s) => s.id === p.setId)
+                                  ?.designIds ?? [],
+                          ),
+                        ),
+                      );
+                      const sourceSetIds = Array.from(
+                        new Set(
+                          selectedPayloads
+                            .filter(
+                              (
+                                p,
+                              ): p is Extract<DragPayload, { kind: "variant" }> =>
+                                p.kind === "variant",
+                            )
+                            .map((p) => p.setId),
+                        ),
+                      );
+                      setAddToSetPopover({
+                        designIds,
+                        sourceSetIds,
+                        // Never offer the source set as a target — you
+                        // can't merge a set into itself.
+                        excludeSetId: isVariantSet
+                          ? d.variantSetId ?? undefined
+                          : undefined,
+                        anchorRect: anchorEl.getBoundingClientRect(),
+                        label: isVariantSet
+                          ? `Merge into another variant set`
+                          : `Add ${designIds.length} design${designIds.length === 1 ? "" : "s"} to …`,
+                      });
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
       </div>
+      {editingSet && (
+        <VariantEditModal
+          set={editingSet}
+          designsById={designsById}
+          sortMode={sortMode}
+          cachedSet={cachedSet}
+          storageUrlBase={storageUrlBase}
+          onClose={() => setEditingSet(null)}
+          onRename={async (newName) => {
+            const res = await renameVariantSet(editingSet.id, newName);
+            if (res.error) {
+              pushToast({ kind: "error", message: res.error });
+              return;
+            }
+            pushToast({ kind: "success", message: "Set renamed." });
+            setEditingSet({ ...editingSet, name: newName });
+            router.refresh();
+          }}
+          onRemoveMember={async (designId) => {
+            const nextIds = editingSet.designIds.filter(
+              (id) => id !== designId,
+            );
+            const res = await setVariantMembership(editingSet.id, nextIds);
+            if (res.error) {
+              pushToast({ kind: "error", message: res.error });
+              return;
+            }
+            pushToast({ kind: "success", message: "Removed from set." });
+            if (nextIds.length < 2) {
+              // Fewer than 2 members remaining defeats the purpose of a
+              // variant set. Delete it so the user doesn't get stuck
+              // with a "set of 1" pill.
+              await deleteVariantSet(editingSet.id);
+              pushToast({
+                kind: "info",
+                message:
+                  "Set deleted — a variant set needs 2+ members.",
+              });
+              setEditingSet(null);
+              router.refresh();
+              return;
+            }
+            setEditingSet({ ...editingSet, designIds: nextIds });
+            router.refresh();
+          }}
+          onDelete={async () => {
+            const res = await deleteVariantSet(editingSet.id);
+            if (res.error) {
+              pushToast({ kind: "error", message: res.error });
+              return;
+            }
+            pushToast({ kind: "success", message: "Set deleted." });
+            setEditingSet(null);
+            router.refresh();
+          }}
+        />
+      )}
+      {autoGroupOpen && (
+        <AutoGroupModal
+          onClose={() => setAutoGroupOpen(false)}
+          onApply={async (prefix, clearExisting) => {
+            const res = await autoGroupByPrefix(prefix, clearExisting);
+            if (res.error && !res.setsCreated) {
+              pushToast({ kind: "error", message: res.error });
+              return;
+            }
+            const parts = [
+              clearExisting
+                ? `Deleted ${res.setsDeleted ?? 0} existing sets`
+                : null,
+              `Grouped ${res.designsGrouped ?? 0} designs into ${res.setsCreated ?? 0} sets`,
+              `(${res.distinctCodes ?? 0} codes seen)`,
+            ].filter(Boolean);
+            pushToast({
+              kind: "success",
+              message: parts.join(" · "),
+            });
+            setAutoGroupOpen(false);
+            router.refresh();
+          }}
+        />
+      )}
+      {helpOpen && <VariantGroupsHelpModal onClose={() => setHelpOpen(false)} />}
+      {addToSetPopover && (
+        <AddToSetPopover
+          label={addToSetPopover.label}
+          anchorRect={addToSetPopover.anchorRect}
+          sets={variantData.sets.filter(
+            (s) => s.id !== addToSetPopover.excludeSetId,
+          )}
+          designsById={designsById}
+          cachedSet={cachedSet}
+          storageUrlBase={storageUrlBase}
+          onClose={() => setAddToSetPopover(null)}
+          onPick={async (setId) => {
+            const existing =
+              variantData.sets.find((s) => s.id === setId)?.designIds ?? [];
+            const nextIds = Array.from(
+              new Set([...existing, ...addToSetPopover.designIds]),
+            );
+            const res = await setVariantMembership(setId, nextIds);
+            if (res.error) {
+              pushToast({ kind: "error", message: res.error });
+              return;
+            }
+            // Delete any source variant sets whose members were merged.
+            for (const srcId of addToSetPopover.sourceSetIds) {
+              if (srcId !== setId) await deleteVariantSet(srcId);
+            }
+            const setName =
+              variantData.sets.find((s) => s.id === setId)?.name ??
+              "variant set";
+            pushToast({
+              kind: "success",
+              message:
+                addToSetPopover.sourceSetIds.length > 0
+                  ? `Merged into "${setName}".`
+                  : `Added ${addToSetPopover.designIds.length} design${addToSetPopover.designIds.length === 1 ? "" : "s"} to "${setName}".`,
+            });
+            setAddToSetPopover(null);
+            clearSelection();
+            router.refresh();
+          }}
+        />
+      )}
+      {pendingDrop && (
+        <ConfirmDropModal
+          target={pendingDrop.target}
+          sources={pendingDrop.sources}
+          designsById={designsById}
+          variantData={variantData}
+          cachedSet={cachedSet}
+          storageUrlBase={storageUrlBase}
+          onCancel={() => setPendingDrop(null)}
+          onConfirm={async () => {
+            const { target, sources } = pendingDrop;
+            setPendingDrop(null);
+            await applyDrop(target, sources);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -3531,19 +5671,81 @@ function TopDesigns({
 // text block underneath (title, stats, primary value). The sort mode
 // determines which value the card foregrounds so the emphasized number
 // aligns with what the user is ranking by.
+type VariantMarker =
+  | { kind: "set"; count: number }   // this card is a folded variant set
+  | { kind: "orphan" }                // this design is not in any set
+  | { kind: "member" };               // this design is in a set (grouped view hides it)
+
+// Tokenize a design title for similarity matching. Strips ZAB SKU codes
+// (they're internal identifiers, would sabotage similarity), lowercases,
+// and splits on any non-alphanumeric.
+function titleTokens(title: string): string[] {
+  return title
+    .toLowerCase()
+    .replace(/\bzab[a-z0-9]+\b/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 1);
+}
+
+// Jaccard similarity between two token lists — |intersection| / |union|.
+// Two titles that share most of their tokens score >0.5; unrelated
+// titles typically score <0.2. Used to guess variant-siblings when the
+// user starts a grouping from one orphan thumbnail.
+function titleSimilarity(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  let common = 0;
+  for (const t of setA) if (setB.has(t)) common++;
+  const union = new Set([...a, ...b]).size;
+  return common / union;
+}
+
+// Payload shape carried through drag events so drop handlers know what
+// the source is. Same shape covers "individual design" and "folded
+// variant set" — drop handlers key off `kind`.
+type DragPayload =
+  | { kind: "design"; designId: number }
+  | { kind: "variant"; setId: string };
+
 function DesignThumbCard({
   design,
   cached,
   storageUrlBase,
   sortMode,
   onClick,
+  variantMarker,
+  onEditClick,
+  dragPayload,
+  onDropOnCard,
+  selected,
+  onAddToSetClick,
 }: {
   design: DesignAgg;
   cached: boolean;
   storageUrlBase: string;
   sortMode: TopDesignSort;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
+  variantMarker?: VariantMarker;
+  // Only relevant on variant-set cards: opens the edit modal.
+  onEditClick?: () => void;
+  // What this card broadcasts when the user starts dragging it. Omitted
+  // for cards that can't participate as sources (rare).
+  dragPayload?: DragPayload;
+  // Fired when another card is dropped onto this one. Receives the
+  // source payload; the parent decides whether it's a new-set create,
+  // an append-to-set, or a no-op.
+  onDropOnCard?: (source: DragPayload) => void;
+  // True when this card is part of the current Cmd/Ctrl-click
+  // multi-selection. Renders a saffron ring so the user can see the
+  // set at a glance.
+  selected?: boolean;
+  // Only relevant on orphan cards: opens a "add to existing set"
+  // dropdown so the user can pick a target set from a list instead of
+  // dragging. Complementary to drag-drop, not a replacement.
+  onAddToSetClick?: (anchorEl: HTMLElement) => void;
 }) {
+  const [dragOver, setDragOver] = useState(false);
   const primary =
     sortMode === "sales"
       ? { value: design.saleCount.toLocaleString("en-US"), label: "sold" }
@@ -3552,37 +5754,210 @@ function DesignThumbCard({
         : sortMode === "refundCount"
           ? { value: design.refundCount.toLocaleString("en-US"), label: "refunds", danger: true }
           : { value: money(design.net), label: "net" };
+  const thumbAnchor =
+    variantMarker?.kind === "set"
+      ? design.variantLeadDesignId ?? design.design_id
+      : design.design_id;
+  const isSet = variantMarker?.kind === "set";
+  const isOrphan = variantMarker?.kind === "orphan";
+  const cardBorder = dragOver || selected
+    ? "var(--saffron-500)"
+    : "var(--parchment-200)";
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={(e) => onClick(e)}
+      draggable={!!dragPayload}
+      onDragStart={
+        dragPayload
+          ? (e) => {
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData(
+                "application/x-variant-source",
+                JSON.stringify(dragPayload),
+              );
+            }
+          : undefined
+      }
+      onDragOver={
+        onDropOnCard
+          ? (e) => {
+              const raw = e.dataTransfer.types.includes(
+                "application/x-variant-source",
+              );
+              if (!raw) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              if (!dragOver) setDragOver(true);
+            }
+          : undefined
+      }
+      onDragLeave={
+        onDropOnCard
+          ? () => {
+              setDragOver(false);
+            }
+          : undefined
+      }
+      onDrop={
+        onDropOnCard
+          ? (e) => {
+              e.preventDefault();
+              setDragOver(false);
+              const raw = e.dataTransfer.getData(
+                "application/x-variant-source",
+              );
+              if (!raw) return;
+              try {
+                const source = JSON.parse(raw) as DragPayload;
+                onDropOnCard(source);
+              } catch {
+                // ignore malformed payload
+              }
+            }
+          : undefined
+      }
       style={{
         display: "flex",
         flexDirection: "column",
         background: "var(--surface)",
-        border: "1px solid var(--parchment-200)",
+        border: `1px solid ${cardBorder}`,
         borderRadius: "var(--radius-sm)",
         overflow: "hidden",
         color: "var(--ink-900)",
-        cursor: "pointer",
+        cursor: dragPayload ? "grab" : "pointer",
         padding: 0,
         textAlign: "left",
         font: "inherit",
-        transition: "border-color 160ms ease-out",
+        transition:
+          "border-color 160ms ease-out, box-shadow 160ms ease-out",
+        position: "relative",
+        boxShadow: dragOver || selected
+          ? "0 0 0 3px var(--saffron-100)"
+          : undefined,
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--slate-300)";
+        if (!dragOver && !selected)
+          e.currentTarget.style.borderColor = "var(--slate-300)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--parchment-200)";
+        if (!dragOver && !selected)
+          e.currentTarget.style.borderColor = "var(--parchment-200)";
       }}
     >
-      <DesignSquareThumb
-        designId={design.design_id}
-        title={design.design_title}
-        cached={cached}
-        storageUrlBase={storageUrlBase}
-      />
+      <div style={{ position: "relative" }}>
+        <DesignSquareThumb
+          designId={thumbAnchor}
+          title={design.design_title}
+          cached={cached}
+          storageUrlBase={storageUrlBase}
+        />
+        {isSet && variantMarker.count > 1 && (
+          <span
+            role={onEditClick ? "button" : undefined}
+            tabIndex={onEditClick ? 0 : undefined}
+            aria-label={
+              onEditClick ? "Edit this variant set" : undefined
+            }
+            title={
+              onEditClick
+                ? `Edit set (${variantMarker.count} designs)`
+                : `Variant set of ${variantMarker.count} designs`
+            }
+            onClick={
+              onEditClick
+                ? (e) => {
+                    e.stopPropagation();
+                    onEditClick();
+                  }
+                : undefined
+            }
+            onKeyDown={
+              onEditClick
+                ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.stopPropagation();
+                      onEditClick();
+                    }
+                  }
+                : undefined
+            }
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 8,
+              padding: "3px 10px",
+              borderRadius: 999,
+              background: "var(--ink-900)",
+              color: "var(--parchment-50)",
+              fontSize: 13,
+              fontWeight: 700,
+              fontFamily: "var(--font-mono)",
+              lineHeight: 1.3,
+              boxShadow: "0 1px 4px rgba(0,0,0,0.35)",
+              cursor: onEditClick ? "pointer" : "default",
+              zIndex: 4,
+            }}
+          >
+            ×{variantMarker.count}
+          </span>
+        )}
+        {onAddToSetClick && (isOrphan || isSet) && (
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label={
+              isSet
+                ? "Merge this variant set into another set"
+                : "Add to an existing variant set"
+            }
+            title={
+              isSet
+                ? "Merge into another set"
+                : "Add to an existing variant set"
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddToSetClick(e.currentTarget as HTMLElement);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.stopPropagation();
+                onAddToSetClick(e.currentTarget as HTMLElement);
+              }
+            }}
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              width: 22,
+              height: 22,
+              borderRadius: 999,
+              background: "var(--surface)",
+              border: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--ink-900)",
+              padding: 0,
+              cursor: "pointer",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
+              zIndex: 4,
+            }}
+          >
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 10 10"
+              style={{ display: "block" }}
+              aria-hidden
+            >
+              <line x1="5" y1="1.4" x2="5" y2="8.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              <line x1="1.4" y1="5" x2="8.6" y2="5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </span>
+        )}
+      </div>
       <div
         style={{
           padding: "8px 10px 10px",

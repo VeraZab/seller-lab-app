@@ -64,7 +64,70 @@ export type DesignAgg = {
   saleCount: number;
   // Number of refund events for this design.
   refundCount: number;
+  // Optional variant markers — same semantics as DesignMonthlySeries.
+  // Populated by foldDesignAggByVariant. When null/undefined, this row
+  // is a plain individual design.
+  variantSetId?: string | null;
+  variantDesignIds?: number[];
+  variantLeadDesignId?: number | null;
 };
+
+// Fold DesignAgg entries into variant-set aggregates. Sums gross /
+// refunds / net / units / counts across each set's member designs.
+// Ungrouped designs pass through unchanged.
+export function foldDesignAggByVariant(
+  designs: DesignAgg[],
+  variantSets: { id: string; name: string; designIds: number[] }[],
+  setByDesignId: Record<number, string | null>,
+): DesignAgg[] {
+  const bySet = new Map<string, DesignAgg[]>();
+  const ungrouped: DesignAgg[] = [];
+  for (const d of designs) {
+    const setId = setByDesignId[d.design_id] ?? null;
+    if (setId) {
+      const list = bySet.get(setId) ?? [];
+      list.push(d);
+      bySet.set(setId, list);
+    } else {
+      ungrouped.push(d);
+    }
+  }
+  const setById = new Map(variantSets.map((v) => [v.id, v]));
+  const folded: DesignAgg[] = [];
+  for (const [setId, members] of bySet) {
+    const setMeta = setById.get(setId);
+    if (!setMeta || members.length === 0) continue;
+    let gross = 0;
+    let refunds = 0;
+    let net = 0;
+    let units = 0;
+    let saleCount = 0;
+    let refundCount = 0;
+    for (const m of members) {
+      gross += m.gross;
+      refunds += m.refunds;
+      net += m.net;
+      units += m.units;
+      saleCount += m.saleCount;
+      refundCount += m.refundCount;
+    }
+    const lead = [...members].sort((a, b) => b.net - a.net)[0];
+    folded.push({
+      design_id: -Math.abs(hashCode(setId)) || -1,
+      design_title: setMeta.name,
+      gross: round2(gross),
+      refunds: round2(refunds),
+      net: round2(net),
+      units,
+      saleCount,
+      refundCount,
+      variantSetId: setId,
+      variantDesignIds: setMeta.designIds,
+      variantLeadDesignId: lead?.design_id ?? null,
+    });
+  }
+  return [...folded, ...ungrouped];
+}
 
 export type BucketAgg = {
   label: string;
@@ -128,11 +191,120 @@ export type DesignMonthlySeries = {
   monthly: Record<string, number>;
   // Monthly quantity keyed by YYYY-MM. Missing months = 0.
   monthlyQty: Record<string, number>;
+  // Optional variant markers. When populated, this row represents a
+  // FOLD of multiple designs into a single "variant set" (color/scale
+  // variations of the same base). When null/undefined, this row is a
+  // plain individual design.
+  variantSetId?: string | null;
+  // All design_ids that were folded into this row (variant only).
+  variantDesignIds?: number[];
+  // The top-selling design in the set — used as the visual anchor for
+  // the folded thumbnail preview.
+  variantLeadDesignId?: number | null;
 };
+
+// Fold a design-level series into a variant-set-level series. For each
+// variant set present in `setByDesignId`, sums the monthly / total /
+// product-mix values across its member designs. Designs not in any set
+// pass through as-is.
+//
+// Called on the client after the server produced the per-design series
+// — variant memberships are per-user and small, and folding here means
+// server compute stays independent of variant state so the same
+// per-design data can drive both grouped and individual views.
+export function foldDesignsByVariant(
+  series: DesignMonthlySeries[],
+  variantSets: { id: string; name: string; designIds: number[] }[],
+  setByDesignId: Record<number, string | null>,
+): DesignMonthlySeries[] {
+  const setMembers = new Map<string, DesignMonthlySeries[]>();
+  const ungrouped: DesignMonthlySeries[] = [];
+  for (const s of series) {
+    const setId = setByDesignId[s.design_id] ?? null;
+    if (setId) {
+      const list = setMembers.get(setId) ?? [];
+      list.push(s);
+      setMembers.set(setId, list);
+    } else {
+      ungrouped.push(s);
+    }
+  }
+  const setById = new Map(variantSets.map((v) => [v.id, v]));
+  const folded: DesignMonthlySeries[] = [];
+  for (const [setId, designs] of setMembers) {
+    const setMeta = setById.get(setId);
+    if (!setMeta || designs.length === 0) continue;
+    let totalNet = 0;
+    let totalSales = 0;
+    let totalQty = 0;
+    let wallpaperNet = 0;
+    let fabricNet = 0;
+    let decorNet = 0;
+    const monthly: Record<string, number> = {};
+    const monthlyQty: Record<string, number> = {};
+    for (const d of designs) {
+      totalNet += d.totalNet;
+      totalSales += d.totalSales;
+      totalQty += d.totalQty;
+      // Weighted product-mix contribution: each design's mix percentage
+      // is applied to its own net, then re-percented across the set.
+      wallpaperNet += (d.wallpaperPct * d.totalNet) / 100;
+      fabricNet += (d.fabricPct * d.totalNet) / 100;
+      decorNet += (d.decorPct * d.totalNet) / 100;
+      for (const [m, v] of Object.entries(d.monthly)) {
+        monthly[m] = (monthly[m] ?? 0) + v;
+      }
+      for (const [m, v] of Object.entries(d.monthlyQty)) {
+        monthlyQty[m] = (monthlyQty[m] ?? 0) + v;
+      }
+    }
+    const totalAttribution = Math.max(
+      1,
+      wallpaperNet + fabricNet + decorNet,
+    );
+    // Lead design = biggest earner in the set. Used as the thumbnail
+    // anchor for the folded pill.
+    const lead = [...designs].sort((a, b) => b.totalNet - a.totalNet)[0];
+    folded.push({
+      // Synthetic negative design_id keeps types happy without
+      // clashing with real (positive) Spoonflower design IDs.
+      design_id: -Math.abs(hashCode(setId)) || -1,
+      design_title: setMeta.name,
+      totalNet: round2(totalNet),
+      totalSales,
+      totalQty: round2(totalQty),
+      wallpaperPct: round2((wallpaperNet / totalAttribution) * 100),
+      fabricPct: round2((fabricNet / totalAttribution) * 100),
+      decorPct: round2((decorNet / totalAttribution) * 100),
+      monthly,
+      monthlyQty,
+      variantSetId: setId,
+      variantDesignIds: setMeta.designIds,
+      variantLeadDesignId: lead?.design_id ?? null,
+    });
+  }
+  return [...folded, ...ungrouped];
+}
+
+// Tiny stable-ish string hasher for synthesizing negative design_ids
+// for folded variant sets. Doesn't need to be cryptographic — just
+// needs to give each set a distinct number.
+function hashCode(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h;
+}
 
 export function computeTopDesignsMonthly(
   allRows: SalesRow[],
   topN: number = 10,
+  // design_ids that MUST land in the returned series regardless of
+  // their standalone ranking. Used to make sure every member of a
+  // variant set is present so the client-side fold sums the full set —
+  // otherwise a low-earning variant member gets silently dropped and
+  // the folded total is too high (missing negative refund contribution)
+  // or too low (missing positive contribution).
+  mustIncludeDesignIds: Set<number> = new Set(),
 ): { series: DesignMonthlySeries[]; months: string[] } {
   const rows = allRows.filter(isAnalyticsEvent);
 
@@ -232,9 +404,13 @@ export function computeTopDesignsMonthly(
   const topByQty = [...all]
     .sort((a, b) => b.totalQty - a.totalQty)
     .slice(0, topN);
+  // Any design in mustIncludeDesignIds gets pulled in regardless of
+  // rank so client-side variant folding sees the full set. Cheap: only
+  // the designs that actually exist in `all` (already have events).
+  const forced = all.filter((d) => mustIncludeDesignIds.has(d.design_id));
   const idSet = new Set<number>();
   const ranked: DesignMonthlySeries[] = [];
-  for (const d of [...topByRev, ...topByQty]) {
+  for (const d of [...topByRev, ...topByQty, ...forced]) {
     if (idSet.has(d.design_id)) continue;
     idSet.add(d.design_id);
     ranked.push(d);

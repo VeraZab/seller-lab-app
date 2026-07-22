@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import AnalyticsClient from "./analytics-client";
 import { uploadSales } from "./actions";
+import type { VariantData, VariantSet } from "./variant-actions";
 import {
   computeConversion,
   computeCustomers,
@@ -149,6 +150,39 @@ export default async function AnalyticsPage() {
   }
   const supabasePublicBase = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
+  // Load variant sets + memberships. Small payload (typically a handful
+  // of sets), cheap to fetch each request.
+  const [{ data: variantSetRows }, { data: variantMemberRows }] =
+    await Promise.all([
+      supabase
+        .from("design_variant_sets")
+        .select("id, name")
+        .eq("user_id", user.id)
+        .order("name", { ascending: true }),
+      supabase
+        .from("user_design_variant")
+        .select("design_id, variant_set_id")
+        .eq("user_id", user.id)
+        .not("variant_set_id", "is", null),
+    ]);
+  const variantSets: VariantSet[] = ((variantSetRows ?? []) as {
+    id: string;
+    name: string;
+  }[]).map((s) => ({ id: s.id, name: s.name, designIds: [] }));
+  const setById = new Map(variantSets.map((s) => [s.id, s]));
+  const setByDesignId: Record<number, string | null> = {};
+  for (const m of (variantMemberRows ?? []) as {
+    design_id: number;
+    variant_set_id: string | null;
+  }[]) {
+    setByDesignId[m.design_id] = m.variant_set_id;
+    if (m.variant_set_id) {
+      const set = setById.get(m.variant_set_id);
+      if (set) set.designIds.push(m.design_id);
+    }
+  }
+  const variantData: VariantData = { sets: variantSets, setByDesignId };
+
   // Pre-compute KPI variants per year so the client can flip between
   // "All years" and any single year without a roundtrip. Small payload
   // (a few numbers × few years) so cheap to send.
@@ -200,7 +234,18 @@ export default async function AnalyticsPage() {
         conversion: computeConversion(rows),
         heatmapEvents: collectHeatmapEvents(rows),
         yearly: computeYearly(rows),
-        topDesignsMonthly: computeTopDesignsMonthly(rows, 10),
+        // Variant members forced into the series so the client-side
+        // fold sums the full set — otherwise low-ranked members get
+        // dropped and totals look wrong.
+        topDesignsMonthly: computeTopDesignsMonthly(
+          rows,
+          10,
+          new Set(
+            Object.entries(variantData.setByDesignId)
+              .filter(([, setId]) => setId != null)
+              .map(([designId]) => Number(designId)),
+          ),
+        ),
         topKeywordsMonthly: computeTopKeywordsMonthly(
           rows,
           tagsByDesign,
@@ -230,6 +275,7 @@ export default async function AnalyticsPage() {
         latestSaleAt,
         totalSaleEvents,
       }}
+      variantData={variantData}
     />
   );
 }
