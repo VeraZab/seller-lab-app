@@ -732,6 +732,8 @@ function Pricing() {
               the webhook after payment succeeds. */}
           <a
             href="https://buy.stripe.com/bJe9AS24pbAFbMh4iR6Na00"
+            target="_blank"
+            rel="noopener noreferrer"
             className="btn btn--accent"
             style={{ width: "100%" }}
           >

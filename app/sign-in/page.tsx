@@ -230,8 +230,9 @@ function SignInPageInner() {
           ) : (
             <form
               onSubmit={onSubmit}
-              style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              style={{ display: "flex", flexDirection: "column", gap: 16 }}
             >
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <label
                 htmlFor="email"
                 style={{
@@ -269,47 +270,20 @@ function SignInPageInner() {
                   disabled={busy}
                 />
               </div>
+              </div>
 
               {mode !== "forgot" && (
-                <>
-                  <div
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label
+                    htmlFor="password"
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "baseline",
-                      marginTop: 4,
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      color: "var(--ink-700)",
                     }}
                   >
-                    <label
-                      htmlFor="password"
-                      style={{
-                        fontSize: 12.5,
-                        fontWeight: 600,
-                        color: "var(--ink-700)",
-                      }}
-                    >
-                      Password
-                    </label>
-                    {mode === "sign-in" && (
-                      <button
-                        type="button"
-                        onClick={() => switchMode("forgot")}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          padding: 0,
-                          fontSize: 11.5,
-                          color: "var(--ink-500)",
-                          textDecoration: "underline",
-                          textDecorationStyle: "dotted",
-                          textUnderlineOffset: 3,
-                          cursor: "pointer",
-                        }}
-                      >
-                        Forgot password?
-                      </button>
-                    )}
-                  </div>
+                    Password
+                  </label>
                   <div style={{ position: "relative" }}>
                     <input
                       id="password"
@@ -348,7 +322,27 @@ function SignInPageInner() {
                       <EyeToggleIcon open={showPassword} />
                     </button>
                   </div>
-                </>
+                  {mode === "sign-in" && (
+                    <button
+                      type="button"
+                      onClick={() => switchMode("forgot")}
+                      style={{
+                        alignSelf: "flex-start",
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                        fontSize: 11.5,
+                        color: "var(--ink-500)",
+                        textDecoration: "underline",
+                        textDecorationStyle: "dotted",
+                        textUnderlineOffset: 3,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
               )}
 
               {status.kind === "error" && (

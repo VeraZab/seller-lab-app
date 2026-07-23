@@ -179,66 +179,69 @@ export default function SetPasswordPage() {
           {(status.kind === "idle" || status.kind === "busy" || status.kind === "error") && (
             <form
               onSubmit={onSubmit}
-              style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              style={{ display: "flex", flexDirection: "column", gap: 16 }}
             >
-              <label
-                htmlFor="new-password"
-                style={{
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  color: "var(--ink-700)",
-                }}
-              >
-                New password
-              </label>
-              <div style={{ position: "relative" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <label
+                  htmlFor="new-password"
+                  style={{
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    color: "var(--ink-700)",
+                  }}
+                >
+                  New password
+                </label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    id="new-password"
+                    type={showPassword ? "text" : "password"}
+                    required
+                    autoComplete="new-password"
+                    autoFocus
+                    minLength={6}
+                    placeholder="6+ characters"
+                    className="input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={busy}
+                    style={{ paddingRight: 40 }}
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    onClick={() => setShowPassword((v) => !v)}
+                    style={eyeButtonStyle}
+                  >
+                    <EyeToggleIcon open={showPassword} />
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <label
+                  htmlFor="confirm-password"
+                  style={{
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    color: "var(--ink-700)",
+                  }}
+                >
+                  Confirm new password
+                </label>
                 <input
-                  id="new-password"
+                  id="confirm-password"
                   type={showPassword ? "text" : "password"}
                   required
                   autoComplete="new-password"
-                  autoFocus
                   minLength={6}
-                  placeholder="6+ characters"
+                  placeholder="Type it again"
                   className="input"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
                   disabled={busy}
-                  style={{ paddingRight: 40 }}
                 />
-                <button
-                  type="button"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  onClick={() => setShowPassword((v) => !v)}
-                  style={eyeButtonStyle}
-                >
-                  <EyeToggleIcon open={showPassword} />
-                </button>
               </div>
-
-              <label
-                htmlFor="confirm-password"
-                style={{
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  color: "var(--ink-700)",
-                  marginTop: 4,
-                }}
-              >
-                Confirm new password
-              </label>
-              <input
-                id="confirm-password"
-                type={showPassword ? "text" : "password"}
-                required
-                autoComplete="new-password"
-                minLength={6}
-                placeholder="Type it again"
-                className="input"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                disabled={busy}
-              />
 
               {status.kind === "error" && (
                 <div className="alert alert--error" role="alert">
