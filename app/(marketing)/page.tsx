@@ -12,7 +12,6 @@ export default function MarketingPage() {
       <Hero />
       <ProductShot />
       <FeatureGrid />
-      <Testimonial />
       <Pricing />
       <FAQ />
     </>
@@ -85,7 +84,7 @@ function Hero() {
         }}
       >
         <div className="eyebrow" style={{ marginBottom: 18 }}>
-          For Spoonflower sellers, by a Spoonflower seller
+          For Spoonflower sellers, by Spoonflower sellers
         </div>
         <h1
           style={{
@@ -131,9 +130,12 @@ function Hero() {
           <Link href="#features" className="btn btn--ghost btn--lg">
             See it in action
           </Link>
-          <Link href="/sign-in" className="btn btn--accent btn--lg">
+          <a
+            href="https://buy.stripe.com/bJe9AS24pbAFbMh4iR6Na00"
+            className="btn btn--accent btn--lg"
+          >
             Get Pro
-          </Link>
+          </a>
         </div>
         <div
           style={{
@@ -612,90 +614,6 @@ const h2Style = {
   color: "var(--ink-900)",
 };
 
-// ---------------- Testimonial ----------------
-
-function Testimonial() {
-  return (
-    <section
-      style={{
-        background: "var(--parchment-100)",
-        borderTop: "1px solid var(--border)",
-        borderBottom: "1px solid var(--border)",
-        padding: "88px 32px",
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 760,
-          margin: "0 auto",
-          textAlign: "center",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 18,
-        }}
-      >
-        <QuatBullet size={20} />
-        <blockquote
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: 400,
-            fontSize: 34,
-            lineHeight: 1.22,
-            letterSpacing: "-0.015em",
-            margin: 0,
-            color: "var(--ink-900)",
-          }}
-        >
-          &ldquo;I used to keep tags in three spreadsheets. Now I just paste
-          the listing URL and the right keywords float to the top — colored
-          by whether they actually{" "}
-          <em style={{ fontStyle: "italic" }}>sell</em> in my shop.&rdquo;
-        </blockquote>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginTop: 10,
-          }}
-        >
-          <div
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 999,
-              background: "var(--slate-500)",
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: 14,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            M
-          </div>
-          <div>
-            <div
-              style={{
-                fontWeight: 600,
-                fontSize: 14,
-                color: "var(--ink-900)",
-              }}
-            >
-              Maren Olsen
-            </div>
-            <div style={{ fontSize: 12.5, color: "var(--ink-500)" }}>
-              Independent fabric designer · 240 listings
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 // ---------------- Pricing ----------------
 
 function Pricing() {
@@ -809,13 +727,16 @@ function Pricing() {
               <QuatBullet size={10} /> Priority email support
             </li>
           </ul>
-          <Link
-            href="/sign-in"
+          {/* Form-post routes through /api/stripe/checkout which
+              redirects to Stripe Checkout. Account is provisioned by
+              the webhook after payment succeeds. */}
+          <a
+            href="https://buy.stripe.com/bJe9AS24pbAFbMh4iR6Na00"
             className="btn btn--accent"
             style={{ width: "100%" }}
           >
             Get Pro
-          </Link>
+          </a>
         </div>
       </div>
     </section>

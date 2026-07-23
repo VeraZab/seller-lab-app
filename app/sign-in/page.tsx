@@ -9,12 +9,18 @@ import { Icon } from "@/components/icon";
 import { LogoMeadow } from "@/components/logo-meadow";
 import { createClient } from "@/lib/supabase/client";
 
+// Only two modes on this page: standard sign-in and forgot-password.
+// Account creation lives inside the Stripe Checkout → webhook flow,
+// not here — a paying customer's account is provisioned server-side
+// and they land here to sign in for the first time.
+type Mode = "sign-in" | "forgot";
+
 type Status =
   | { kind: "idle" }
-  | { kind: "sending" }
-  | { kind: "sent"; email: string }
+  | { kind: "busy" }
   | { kind: "no-account"; email: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "reset-sent"; email: string };
 
 export default function SignInPage() {
   return (
@@ -25,56 +31,93 @@ export default function SignInPage() {
 }
 
 function SignInPageInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/workspace";
+  const initialMode = (searchParams.get("mode") as Mode) ?? "sign-in";
   const callbackError = searchParams.get("error");
 
+  const [mode, setMode] = useState<Mode>(
+    initialMode === "forgot" ? "forgot" : "sign-in",
+  );
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [status, setStatus] = useState<Status>(() =>
     callbackError ? { kind: "error", message: callbackError } : { kind: "idle" },
   );
+
+  const switchMode = (next: Mode) => {
+    setMode(next);
+    setStatus({ kind: "idle" });
+    setPassword("");
+  };
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) return;
-
-    setStatus({ kind: "sending" });
     const supabase = createClient();
 
-    // Pre-flight: is this email a paid account? If not, don't send any email —
-    // tell the user immediately. Supabase's shouldCreateUser:false flag
-    // silently no-ops on unknown emails (anti-enumeration), so we can't rely
-    // on the OTP response to detect this.
-    const { data: hasPaid, error: rpcError } = await supabase.rpc(
-      "email_has_paid_account",
-      { p_email: trimmed },
-    );
+    if (mode === "sign-in") {
+      if (!password) return;
+      setStatus({ kind: "busy" });
 
-    if (rpcError) {
-      setStatus({ kind: "error", message: rpcError.message });
+      // Pre-flight: is this email a paid account? If not, tell the
+      // user immediately rather than surfacing a generic "invalid
+      // credentials" — password auth's error doesn't distinguish
+      // "wrong password" from "unknown user".
+      const { data: hasPaid, error: rpcError } = await supabase.rpc(
+        "email_has_paid_account",
+        { p_email: trimmed },
+      );
+      if (rpcError) {
+        setStatus({ kind: "error", message: rpcError.message });
+        return;
+      }
+      if (!hasPaid) {
+        setStatus({ kind: "no-account", email: trimmed });
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: trimmed,
+        password,
+      });
+      if (error) {
+        setStatus({ kind: "error", message: error.message });
+        return;
+      }
+      router.push(next);
+      router.refresh();
       return;
     }
-    if (!hasPaid) {
-      setStatus({ kind: "no-account", email: trimmed });
-      return;
-    }
 
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
-    const { error } = await supabase.auth.signInWithOtp({
-      email: trimmed,
-      options: {
-        emailRedirectTo: redirectTo,
-        shouldCreateUser: false,
-      },
+    // mode === "forgot"
+    setStatus({ kind: "busy" });
+    const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
+      redirectTo: `${window.location.origin}/auth/callback?next=/auth/set-password`,
     });
-
     if (error) {
       setStatus({ kind: "error", message: error.message });
       return;
     }
-    setStatus({ kind: "sent", email: trimmed });
+    setStatus({ kind: "reset-sent", email: trimmed });
   };
+
+  const busy = status.kind === "busy";
+
+  const headline =
+    mode === "forgot" ? (
+      "Reset your password"
+    ) : (
+      <>
+        Welcome back to{" "}
+        <em style={{ fontStyle: "italic" }}>Seller Lab.</em>
+      </>
+    );
+  const eyebrow = mode === "forgot" ? "Forgot password" : "Sign in";
+  const submitLabel = mode === "forgot" ? "Send reset link" : "Sign in";
 
   return (
     <main
@@ -151,7 +194,7 @@ function SignInPageInner() {
               height={28}
               style={{ width: 28, height: 28, marginBottom: 4 }}
             />
-            <div className="eyebrow">Sign in</div>
+            <div className="eyebrow">{eyebrow}</div>
             <h1
               style={{
                 fontFamily: "var(--font-display)",
@@ -163,33 +206,26 @@ function SignInPageInner() {
                 margin: 0,
               }}
             >
-              Welcome back to{" "}
-              <em style={{ fontStyle: "italic" }}>Seller Lab.</em>
+              {headline}
             </h1>
-            <p
-              style={{
-                fontSize: 14,
-                color: "var(--ink-500)",
-                margin: "4px 0 0",
-                lineHeight: 1.5,
-                maxWidth: 320,
-              }}
-            >
-              We&rsquo;ll email you a magic link &mdash; no password to
-              remember.
-            </p>
+            {mode === "forgot" && (
+              <p style={{ fontSize: 13, color: "var(--ink-500)", margin: "6px 0 0", lineHeight: 1.5, maxWidth: 320 }}>
+                We&rsquo;ll email you a link to pick a new password.
+              </p>
+            )}
           </div>
 
-          {status.kind === "sent" ? (
-            <SentState
-              email={status.email}
-              next={next}
-              onReset={() => setStatus({ kind: "idle" })}
-            />
-          ) : status.kind === "no-account" ? (
+          {status.kind === "no-account" ? (
             <NoAccountState
               email={status.email}
-              onReset={() => setStatus({ kind: "idle" })}
+              onReset={() => switchMode("sign-in")}
+            />
+          ) : status.kind === "reset-sent" ? (
+            <SentState
+              title="Check your inbox"
+              email={status.email}
+              detail="Open the link to pick a new password."
+              onReset={() => switchMode("sign-in")}
             />
           ) : (
             <form
@@ -230,13 +266,98 @@ function SignInPageInner() {
                   className="input input--with-icon"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  disabled={status.kind === "sending"}
+                  disabled={busy}
                 />
               </div>
 
+              {mode !== "forgot" && (
+                <>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      marginTop: 4,
+                    }}
+                  >
+                    <label
+                      htmlFor="password"
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: "var(--ink-700)",
+                      }}
+                    >
+                      Password
+                    </label>
+                    {mode === "sign-in" && (
+                      <button
+                        type="button"
+                        onClick={() => switchMode("forgot")}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          fontSize: 11.5,
+                          color: "var(--ink-500)",
+                          textDecoration: "underline",
+                          textDecorationStyle: "dotted",
+                          textUnderlineOffset: 3,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ position: "relative" }}>
+                    <input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      autoComplete="current-password"
+                      placeholder="Your password"
+                      className="input"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={busy}
+                      style={{ paddingRight: 40 }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      onClick={() => setShowPassword((v) => !v)}
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 28,
+                        height: 28,
+                        background: "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        color: "var(--ink-500)",
+                        padding: 0,
+                        borderRadius: 6,
+                      }}
+                    >
+                      <EyeToggleIcon open={showPassword} />
+                    </button>
+                  </div>
+                </>
+              )}
+
               {status.kind === "error" && (
                 <div className="alert alert--error" role="alert">
-                  <div className="alert__title">Couldn&rsquo;t send link</div>
+                  <div className="alert__title">
+                    {mode === "forgot"
+                      ? "Couldn't send reset link"
+                      : "Couldn't sign in"}
+                  </div>
                   <div style={{ fontSize: 13 }}>{status.message}</div>
                 </div>
               )}
@@ -245,19 +366,52 @@ function SignInPageInner() {
                 type="submit"
                 className="btn btn--accent btn--lg"
                 style={{ marginTop: 4, width: "100%" }}
-                disabled={status.kind === "sending"}
+                disabled={
+                  busy ||
+                  !email.trim() ||
+                  (mode !== "forgot" && !password)
+                }
               >
-                {status.kind === "sending" ? (
+                {busy ? (
                   <>
                     <span className="spin" style={{ display: "inline-flex" }}>
                       <Icon name="sparkle" size={14} />
                     </span>
-                    Sending…
+                    {mode === "forgot" ? "Sending…" : "Signing in…"}
                   </>
                 ) : (
-                  "Send magic link"
+                  submitLabel
                 )}
               </button>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  gap: 8,
+                  fontSize: 12.5,
+                  color: "var(--ink-500)",
+                  marginTop: 6,
+                }}
+              >
+                {mode === "sign-in" && (
+                  <>
+                    New here?{" "}
+                    <Link href="/#pricing" style={{ ...linkButtonStyle, textDecoration: "underline" }}>
+                      Get PRO
+                    </Link>
+                  </>
+                )}
+                {mode === "forgot" && (
+                  <button
+                    type="button"
+                    onClick={() => switchMode("sign-in")}
+                    style={linkButtonStyle}
+                  >
+                    ← Back to sign in
+                  </button>
+                )}
+              </div>
 
               <p
                 style={{
@@ -267,7 +421,7 @@ function SignInPageInner() {
                   lineHeight: 1.5,
                 }}
               >
-                By signing in you agree to the{" "}
+                By continuing you agree to the{" "}
                 <Link
                   href="/terms"
                   style={{ color: "var(--ink-700)" }}
@@ -291,150 +445,71 @@ function SignInPageInner() {
   );
 }
 
+// Eye icon that switches between "open" (password visible) and
+// "closed with slash" (password hidden). Inline SVG so no new asset
+// dependency.
+function EyeToggleIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2 10s3-6 8-6 8 6 8 6-3 6-8 6-8-6-8-6z" />
+      <circle cx="10" cy="10" r="2.5" />
+      {!open && <line x1="3" y1="17" x2="17" y2="3" />}
+    </svg>
+  );
+}
+
+const linkButtonStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  fontSize: 12.5,
+  color: "var(--ink-700)",
+  textDecoration: "underline",
+  textDecorationStyle: "dotted",
+  textUnderlineOffset: 3,
+  cursor: "pointer",
+};
+
 function SentState({
+  title,
   email,
-  next,
+  detail,
   onReset,
 }: {
+  title: string;
   email: string;
-  next: string;
+  detail: string;
   onReset: () => void;
 }) {
-  const router = useRouter();
-  const [code, setCode] = useState("");
-  const [showCode, setShowCode] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [codeError, setCodeError] = useState<string | null>(null);
-
-  const onVerifyCode = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const token = code.trim();
-    if (token.length < 6) return;
-
-    setVerifying(true);
-    setCodeError(null);
-    const supabase = createClient();
-    const { error } = await supabase.auth.verifyOtp({
-      email,
-      token,
-      type: "email",
-    });
-    if (error) {
-      setCodeError(error.message);
-      setVerifying(false);
-      return;
-    }
-    router.push(next);
-    router.refresh();
-  };
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div className="alert alert--success" role="status">
-        <div className="alert__title">Check your inbox</div>
+        <div className="alert__title">{title}</div>
         <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-          We sent a link to{" "}
+          Sent to{" "}
           <strong style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
             {email}
           </strong>
-          . Open it in this browser to finish signing in.
+          . {detail}
         </div>
       </div>
-
-      {!showCode ? (
-        <button
-          type="button"
-          onClick={() => setShowCode(true)}
-          style={{
-            background: "none",
-            border: "none",
-            padding: 0,
-            fontSize: 12.5,
-            color: "var(--ink-500)",
-            cursor: "pointer",
-            textAlign: "left",
-            textDecoration: "underline",
-            textDecorationStyle: "dotted",
-            textUnderlineOffset: 3,
-            alignSelf: "flex-start",
-          }}
-        >
-          Or have the 6-digit code? Enter it here.
-        </button>
-      ) : (
-        <form
-          onSubmit={onVerifyCode}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            paddingTop: 8,
-            borderTop: "1px solid var(--border)",
-          }}
-        >
-          <label
-            htmlFor="otp-code"
-            style={{
-              fontSize: 12.5,
-              fontWeight: 600,
-              color: "var(--ink-700)",
-              marginTop: 6,
-            }}
-          >
-            6-digit code from the email
-          </label>
-          <input
-            id="otp-code"
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            autoFocus
-            placeholder="123456"
-            maxLength={6}
-            className="input"
-            value={code}
-            onChange={(e) =>
-              setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-            }
-            disabled={verifying}
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 18,
-              letterSpacing: "0.4em",
-              textAlign: "center",
-              paddingLeft: 12,
-            }}
-          />
-          {codeError && (
-            <div className="help help--error">{codeError}</div>
-          )}
-          <button
-            type="submit"
-            className="btn btn--accent btn--sm"
-            disabled={verifying || code.length < 6}
-            style={{ marginTop: 4 }}
-          >
-            {verifying ? (
-              <>
-                <span className="spin" style={{ display: "inline-flex" }}>
-                  <Icon name="sparkle" size={12} />
-                </span>
-                Verifying...
-              </>
-            ) : (
-              "Verify and sign in"
-            )}
-          </button>
-        </form>
-      )}
-
       <button
         type="button"
         className="btn btn--ghost btn--sm"
         onClick={onReset}
         style={{ alignSelf: "flex-start" }}
       >
-        Use a different email
+        ← Back to sign in
       </button>
     </div>
   );
